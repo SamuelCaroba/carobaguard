@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0b1015">
+    <title>CarobaGuard</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <section id="login-view" class="login-shell" hidden>
+      <div class="login-card">
+        <div class="brand-mark" aria-hidden="true">CG</div>
+        <p class="eyebrow">LINUX CONTROL PLANE</p>
+        <h1>CarobaGuard</h1>
+        <p class="muted">Administração técnica, leve e assistida por IA.</p>
+        <form id="login-form">
+          <label for="username">Usuário</label>
+          <input id="username" name="username" autocomplete="username" value="admin" required>
+          <label for="password">Senha</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <p id="login-error" class="form-error" role="alert"></p>
+          <button type="submit" class="primary full">Entrar</button>
+        </form>
+      </div>
+    </section>
+
+    <div id="app" class="app-shell" hidden>
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark small">CG</span>
+          <div><strong>CarobaGuard</strong><small>CONTROL PLANE</small></div>
+        </div>
+        <nav id="nav" aria-label="Seções">
+          <button class="nav-item active" data-page="overview"><span>01</span> Visão geral</button>
+          <button class="nav-item" data-page="docker"><span>02</span> Containers</button>
+          <button class="nav-item" data-page="services"><span>03</span> Serviços</button>
+          <button class="nav-item" data-page="logs"><span>04</span> Logs</button>
+          <button class="nav-item" data-page="terminal"><span>05</span> Terminal</button>
+          <button class="nav-item" data-page="ai"><span>06</span> AI Agent</button>
+          <button class="nav-item" data-page="doctor"><span>07</span> Server Doctor</button>
+          <button class="nav-item" data-page="audit"><span>08</span> Audit Log</button>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="connection"><i></i><span>Daemon conectado</span></div>
+          <button id="logout" class="link-button">Sair</button>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="system-label">CARREGANDO SISTEMA</p>
+            <h1 id="page-title">Visão geral</h1>
+          </div>
+          <div class="top-actions">
+            <label class="performance-toggle">
+              <span><strong>Performance Mode</strong><small>reduz tarefas em background</small></span>
+              <input type="checkbox" id="performance-mode">
+              <i></i>
+            </label>
+            <div class="user-chip"><span id="user-initial">A</span><div><strong id="user-name">admin</strong><small id="user-role">admin</small></div></div>
+          </div>
+        </header>
+
+        <div id="toast" class="toast" role="status" hidden></div>
+
+        <section class="page active" id="page-overview">
+          <div class="summary-grid">
+            <article class="metric-card accent-green">
+              <div class="metric-heading"><span>CPU</span><b id="cpu-percent">—</b></div>
+              <div class="bar"><i id="cpu-bar"></i></div>
+              <div class="metric-meta"><span id="cpu-load">Load —</span><span id="cpu-freq">— MHz</span></div>
+            </article>
+            <article class="metric-card accent-blue">
+              <div class="metric-heading"><span>MEMÓRIA</span><b id="memory-percent">—</b></div>
+              <div class="bar"><i id="memory-bar"></i></div>
+              <div class="metric-meta"><span id="memory-used">—</span><span id="swap-used">Swap —</span></div>
+            </article>
+            <article class="metric-card accent-violet">
+              <div class="metric-heading"><span>ARMAZENAMENTO /</span><b id="disk-percent">—</b></div>
+              <div class="bar"><i id="disk-bar"></i></div>
+              <div class="metric-meta"><span id="disk-used">—</span><span id="disk-io">I/O —</span></div>
+            </article>
+            <article class="metric-card accent-amber">
+              <div class="metric-heading"><span>REDE</span><b id="network-total">—</b></div>
+              <div class="network-pair"><span>↓ <b id="network-rx">—</b></span><span>↑ <b id="network-tx">—</b></span></div>
+              <div class="metric-meta"><span>Taxa atual</span><span id="sample-time">—</span></div>
+            </article>
+          </div>
+
+          <div class="content-grid">
+            <article class="panel wide">
+              <div class="panel-heading"><div><p class="eyebrow">HISTÓRICO</p><h2>CPU & memória</h2></div><span class="live-badge"><i></i> LIVE</span></div>
+              <canvas id="history-chart" height="190" aria-label="Histórico de CPU e memória"></canvas>
+              <div class="chart-legend"><span><i class="cpu"></i>CPU</span><span><i class="memory"></i>Memória</span></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><p class="eyebrow">PROCESSADOR</p><h2>Uso por core</h2></div><span id="core-count" class="panel-tag">— CORES</span></div>
+              <div id="core-list" class="core-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><p class="eyebrow">HOST</p><h2>Informações</h2></div></div>
+              <dl class="facts">
+                <div><dt>Hostname</dt><dd id="hostname">—</dd></div>
+                <div><dt>Sistema</dt><dd id="os">—</dd></div>
+                <div><dt>Kernel</dt><dd id="kernel">—</dd></div>
+                <div><dt>Arquitetura</dt><dd id="architecture">—</dd></div>
+                <div><dt>Uptime</dt><dd id="uptime">—</dd></div>
+                <div><dt>Processos</dt><dd id="processes">—</dd></div>
+              </dl>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><p class="eyebrow">SENSORES</p><h2>Temperaturas</h2></div></div>
+              <div id="temperature-list" class="sensor-list"><p class="empty">Nenhum sensor exposto pelo kernel.</p></div>
+            </article>
+            <article class="panel overhead-panel">
+              <div class="panel-heading"><div><p class="eyebrow">CAROBAGUARD OVERHEAD</p><h2>Consumo próprio</h2></div><span id="interval-tag" class="panel-tag">15S</span></div>
+              <dl class="overhead">
+                <div><dt>CPU</dt><dd id="self-cpu">—</dd></div>
+                <div><dt>RAM</dt><dd id="self-memory">—</dd></div>
+                <div><dt>Disco</dt><dd id="self-disk">—</dd></div>
+                <div><dt>Rede</dt><dd id="self-network">—</dd></div>
+                <div><dt>DB Writes</dt><dd id="self-writes">—</dd></div>
+              </dl>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" id="page-docker"><div class="empty-state"><p class="eyebrow">DOCKER ENGINE</p><h2>Containers</h2><p>O adaptador está sendo carregado.</p></div></section>
+        <section class="page" id="page-services"><div class="empty-state"><p class="eyebrow">SYSTEMD</p><h2>Serviços</h2><p>O adaptador está sendo carregado.</p></div></section>
+        <section class="page" id="page-logs"><div class="empty-state"><p class="eyebrow">STREAMING</p><h2>Logs</h2><p>Selecione uma origem para iniciar o stream.</p></div></section>
+        <section class="page" id="page-terminal"><div class="empty-state terminal-placeholder"><p>$ terminal session pending</p><span>PTY seguro via backend</span></div></section>
+        <section class="page" id="page-ai"><div class="empty-state"><p class="eyebrow">OPENCODE</p><h2>AI Agent</h2><p>Status: Sleeping · RAM ~0</p></div></section>
+        <section class="page" id="page-doctor"><div class="empty-state"><p class="eyebrow">SERVER HEALTH</p><h2>Server Doctor</h2><p>Auditoria read-only disponível em breve.</p></div></section>
+        <section class="page" id="page-audit"><div class="empty-state"><p class="eyebrow">IMMUTABLE OPERATIONS TRAIL</p><h2>Audit Log</h2><p>Operações modificadoras aparecerão aqui.</p></div></section>
+      </main>
+    </div>
+  </body>
+</html>
