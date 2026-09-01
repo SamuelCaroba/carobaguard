@@ -129,14 +129,49 @@
           </div>
         </section>
 
-        <section class="page" id="page-docker"><div class="empty-state"><p class="eyebrow">DOCKER ENGINE</p><h2>Containers</h2><p>O adaptador está sendo carregado.</p></div></section>
-        <section class="page" id="page-services"><div class="empty-state"><p class="eyebrow">SYSTEMD</p><h2>Serviços</h2><p>O adaptador está sendo carregado.</p></div></section>
-        <section class="page" id="page-logs"><div class="empty-state"><p class="eyebrow">STREAMING</p><h2>Logs</h2><p>Selecione uma origem para iniciar o stream.</p></div></section>
+        <section class="page" id="page-docker">
+          <div class="section-toolbar">
+            <div><p class="eyebrow">DOCKER ENGINE</p><h2>Containers</h2><p id="docker-status" class="section-status">Verificando socket…</p></div>
+            <button id="refresh-docker" class="secondary">Atualizar</button>
+          </div>
+          <div class="table-shell">
+            <table>
+              <thead><tr><th>Container</th><th>Imagem</th><th>Estado</th><th>Compose</th><th>Criado</th><th class="align-right">Ações</th></tr></thead>
+              <tbody id="docker-rows"><tr><td colspan="6" class="table-empty">Carregando containers…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="page" id="page-services">
+          <div class="section-toolbar">
+            <div><p class="eyebrow">SYSTEMD</p><h2>Serviços</h2><p id="services-status" class="section-status">Verificando systemd…</p></div>
+            <div class="toolbar-actions"><input id="service-filter" class="compact-input" placeholder="Filtrar serviços"><button id="refresh-services" class="secondary">Atualizar</button></div>
+          </div>
+          <div class="table-shell">
+            <table>
+              <thead><tr><th>Unit</th><th>Descrição</th><th>Estado</th><th>Subestado</th><th class="align-right">Ações</th></tr></thead>
+              <tbody id="service-rows"><tr><td colspan="5" class="table-empty">Carregando serviços…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="page" id="page-logs"><div class="empty-state"><p class="eyebrow">STREAMING</p><h2>Logs</h2><p>Use “Logs” em um container ou serviço para abrir uma leitura limitada.</p></div></section>
         <section class="page" id="page-terminal"><div class="empty-state terminal-placeholder"><p>$ terminal session pending</p><span>PTY seguro via backend</span></div></section>
         <section class="page" id="page-ai"><div class="empty-state"><p class="eyebrow">OPENCODE</p><h2>AI Agent</h2><p>Status: Sleeping · RAM ~0</p></div></section>
-        <section class="page" id="page-doctor"><div class="empty-state"><p class="eyebrow">SERVER HEALTH</p><h2>Server Doctor</h2><p>Auditoria read-only disponível em breve.</p></div></section>
-        <section class="page" id="page-audit"><div class="empty-state"><p class="eyebrow">IMMUTABLE OPERATIONS TRAIL</p><h2>Audit Log</h2><p>Operações modificadoras aparecerão aqui.</p></div></section>
+        <section class="page" id="page-doctor">
+          <div class="section-toolbar"><div><p class="eyebrow">READ-ONLY AUDIT</p><h2>Server Doctor</h2><p id="doctor-summary" class="section-status">Execute uma auditoria baseada em evidências do host.</p></div><div class="toolbar-actions"><button id="doctor-ai" class="secondary">Analyze with OpenCode</button><button id="run-doctor" class="primary compact-button">Executar auditoria</button></div></div>
+          <div id="doctor-findings" class="doctor-grid"><div class="doctor-empty">A auditoria não modifica o servidor.</div></div>
+        </section>
+        <section class="page" id="page-audit">
+          <div class="section-toolbar"><div><p class="eyebrow">OPERATIONS TRAIL</p><h2>Audit Log</h2><p class="section-status">Ações manuais e de IA registradas pelo backend.</p></div><button id="refresh-audit" class="secondary">Atualizar</button></div>
+          <div class="table-shell">
+            <table><thead><tr><th>Horário</th><th>Ator</th><th>Origem</th><th>Ação</th><th>Alvo</th><th>Resultado</th><th>Duração</th></tr></thead><tbody id="audit-rows"><tr><td colspan="7" class="table-empty">Nenhuma operação registrada.</td></tr></tbody></table>
+          </div>
+        </section>
       </main>
     </div>
+    <dialog id="log-dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">LOG VIEWER</p><h2 id="log-title">Logs</h2></div><button id="close-logs" class="icon-button" aria-label="Fechar">×</button></div>
+      <div class="log-toolbar"><span id="log-source">—</span><button id="copy-logs" class="secondary small-button">Copiar</button></div>
+      <pre id="log-output" tabindex="0">Carregando…</pre>
+    </dialog>
   </body>
 </html>

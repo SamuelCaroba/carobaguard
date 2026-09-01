@@ -14,9 +14,11 @@ use serde::{Deserialize, Serialize};
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::{
-    AppState,
+    AppState, audit,
     auth::{self, AuthUser, Role},
+    docker, doctor,
     error::{ApiError, ApiResult},
+    services,
     telemetry::{SystemSnapshot, TelemetryProfile},
 };
 
@@ -34,6 +36,22 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/metrics/history", get(metric_history))
         .route("/api/v1/metrics/events", get(metric_events))
         .route("/api/v1/metrics/config", post(configure_metrics))
+        .route("/api/v1/docker/status", get(docker::status))
+        .route("/api/v1/docker/containers", get(docker::containers))
+        .route("/api/v1/docker/containers/{id}", get(docker::inspect))
+        .route("/api/v1/docker/containers/{id}/stats", get(docker::stats))
+        .route("/api/v1/docker/containers/{id}/logs", get(docker::logs))
+        .route(
+            "/api/v1/docker/containers/{id}/actions",
+            post(docker::action),
+        )
+        .route("/api/v1/services/status", get(services::status))
+        .route("/api/v1/services", get(services::units))
+        .route("/api/v1/services/{unit}", get(services::details))
+        .route("/api/v1/services/{unit}/logs", get(services::logs))
+        .route("/api/v1/services/{unit}/actions", post(services::action))
+        .route("/api/v1/audit", get(audit::list))
+        .route("/api/v1/doctor", get(doctor::run))
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())

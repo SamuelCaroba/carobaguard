@@ -5,8 +5,9 @@ sysadmin copilot. It is built as one native Rust daemon with an embedded web UI
 and SQLite database; Docker, Prometheus, Grafana, Node.js and Redis are not runtime
 requirements.
 
-> Early development: the authenticated telemetry dashboard is operational. Docker,
-> systemd, terminal, Server Doctor and OpenCode adapters are being built in-tree.
+> Early development: the authenticated telemetry, Docker, systemd, audit and
+> Server Doctor flows are operational. Terminal and OpenCode lifecycle work is
+> still in progress.
 
 ## Run from source
 
@@ -46,6 +47,12 @@ or on a trusted VPN/LAN.
 - SQLite WAL migrations covering users, sessions, audit, alerts, projects,
   backups, AI sessions and scoped AI permissions;
 - embedded, dependency-free production frontend with a strict CSP.
+- direct Docker Engine Unix-socket API for container listing, inspect, stats,
+  bounded logs and lifecycle operations, with graceful behavior when absent;
+- systemd service inventory, details, journal reads and lifecycle operations using
+  fixed argument vectors (no shell interpolation);
+- mandatory audit records for successful and failed mutations;
+- evidence-backed, read-only Server Doctor checks with severity and confidence.
 
 ## Development
 

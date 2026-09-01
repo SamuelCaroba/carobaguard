@@ -6,6 +6,7 @@ const state = {
   samples: [],
   stream: null,
   currentProfile: "balanced",
+  units: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -83,8 +84,16 @@ document.querySelectorAll(".nav-item").forEach((button) => {
     const page = button.dataset.page;
     $(`page-${page}`).classList.add("active");
     $("page-title").textContent = button.textContent.trim().replace(/^\d+\s*/, "");
+    loadPage(page);
   });
 });
+
+function loadPage(page) {
+  if (page === "docker") loadDocker();
+  if (page === "services") loadServices();
+  if (page === "audit") loadAudit();
+  if (page === "doctor") loadDoctor();
+}
 
 $("performance-mode").addEventListener("change", async (event) => {
   const enabled = event.currentTarget.checked;
@@ -262,6 +271,269 @@ function toast(message, error = false) {
   $("toast").hidden = false;
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 4000);
 }
+
+async function loadDocker() {
+  $("docker-status").textContent = "Verificando socket…";
+  setTableMessage("docker-rows", 6, "Carregando containers…");
+  try {
+    const status = await request("/api/v1/docker/status");
+    if (!status.available) {
+      $("docker-status").textContent = `Indisponível · ${status.error || status.socket}`;
+      setTableMessage("docker-rows", 6, "Docker Engine não está acessível para este daemon.");
+      return;
+    }
+    $("docker-status").textContent = `Docker ${status.version} · ${status.socket}`;
+    const containers = await request("/api/v1/docker/containers");
+    renderContainers(containers);
+  } catch (error) {
+    $("docker-status").textContent = error.message;
+    setTableMessage("docker-rows", 6, "Falha ao consultar Docker.");
+  }
+}
+
+function renderContainers(containers) {
+  if (!containers.length) {
+    setTableMessage("docker-rows", 6, "Nenhum container encontrado.");
+    return;
+  }
+  const rows = containers.map((container) => {
+    const row = document.createElement("tr");
+    row.append(
+      tableCell(container.name, "primary-cell"),
+      tableCell(container.image, "secondary-cell"),
+      statusCell(container.state, container.status),
+      tableCell(container.compose_project || "—"),
+      tableCell(new Date(container.created * 1000).toLocaleDateString()),
+      actionCell(container),
+    );
+    return row;
+  });
+  $("docker-rows").replaceChildren(...rows);
+}
+
+function actionCell(container) {
+  const cell = document.createElement("td");
+  cell.className = "align-right";
+  const actions = document.createElement("div");
+  actions.className = "row-actions";
+  actions.append(actionButton("Logs", () => openDockerLogs(container.id, container.name)));
+  if (container.state === "running") {
+    actions.append(actionButton("Restart", () => mutateContainer(container.id, "restart")));
+    actions.append(actionButton("Stop", () => mutateContainer(container.id, "stop"), "danger"));
+  } else {
+    actions.append(actionButton("Start", () => mutateContainer(container.id, "start")));
+  }
+  actions.append(actionButton("Ask AI", () => openAiFor("container", container.id, container.name), "ai"));
+  cell.append(actions);
+  return cell;
+}
+
+async function mutateContainer(id, action) {
+  try {
+    await request(`/api/v1/docker/containers/${encodeURIComponent(id)}/actions`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    toast(`Container: ${action} solicitado.`);
+    await loadDocker();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function openDockerLogs(id, name) {
+  openLogDialog(`Container · ${name}`, "Docker Engine");
+  try {
+    $("log-output").textContent = await request(`/api/v1/docker/containers/${encodeURIComponent(id)}/logs?tail=500`);
+  } catch (error) { $("log-output").textContent = `Erro: ${error.message}`; }
+}
+
+async function loadServices() {
+  $("services-status").textContent = "Verificando systemd…";
+  setTableMessage("service-rows", 5, "Carregando serviços…");
+  try {
+    const status = await request("/api/v1/services/status");
+    if (!status.available) {
+      $("services-status").textContent = `Indisponível · ${status.error || "systemctl ausente"}`;
+      setTableMessage("service-rows", 5, "systemd não está disponível neste host.");
+      return;
+    }
+    $("services-status").textContent = `System state: ${status.state}${status.error ? ` · ${status.error}` : ""}`;
+    state.units = await request("/api/v1/services");
+    renderServices();
+  } catch (error) {
+    $("services-status").textContent = error.message;
+    setTableMessage("service-rows", 5, "Falha ao consultar systemd.");
+  }
+}
+
+function renderServices() {
+  const filter = $("service-filter").value.trim().toLocaleLowerCase();
+  const units = state.units.filter((unit) => !filter || `${unit.name} ${unit.description}`.toLocaleLowerCase().includes(filter));
+  if (!units.length) {
+    setTableMessage("service-rows", 5, "Nenhum serviço corresponde ao filtro.");
+    return;
+  }
+  const rows = units.map((unit) => {
+    const row = document.createElement("tr");
+    const actions = document.createElement("td");
+    actions.className = "align-right";
+    const buttons = document.createElement("div");
+    buttons.className = "row-actions";
+    buttons.append(actionButton("Logs", () => openServiceLogs(unit.name)));
+    if (unit.active_state === "active") {
+      buttons.append(actionButton("Restart", () => mutateService(unit.name, "restart")));
+      buttons.append(actionButton("Stop", () => mutateService(unit.name, "stop"), "danger"));
+    } else {
+      buttons.append(actionButton("Start", () => mutateService(unit.name, "start")));
+    }
+    buttons.append(actionButton("Ask AI", () => openAiFor("service", unit.name, unit.name), "ai"));
+    actions.append(buttons);
+    row.append(
+      tableCell(unit.name, "primary-cell"),
+      tableCell(unit.description, "secondary-cell"),
+      statusCell(unit.active_state, unit.active_state),
+      tableCell(unit.sub_state),
+      actions,
+    );
+    return row;
+  });
+  $("service-rows").replaceChildren(...rows);
+}
+
+async function mutateService(unit, action) {
+  try {
+    await request(`/api/v1/services/${encodeURIComponent(unit)}/actions`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    toast(`Serviço: ${action} solicitado.`);
+    await loadServices();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function openServiceLogs(unit) {
+  openLogDialog(`Serviço · ${unit}`, "systemd journal");
+  try {
+    $("log-output").textContent = await request(`/api/v1/services/${encodeURIComponent(unit)}/logs?lines=500`);
+  } catch (error) { $("log-output").textContent = `Erro: ${error.message}`; }
+}
+
+async function loadAudit() {
+  setTableMessage("audit-rows", 7, "Carregando trilha de auditoria…");
+  try {
+    const events = await request("/api/v1/audit?limit=200");
+    if (!events.length) {
+      setTableMessage("audit-rows", 7, "Nenhuma operação modificadora registrada.");
+      return;
+    }
+    const rows = events.map((event) => {
+      const row = document.createElement("tr");
+      row.append(
+        tableCell(new Date(event.created_at * 1000).toLocaleString()),
+        tableCell(event.actor_name, "primary-cell"),
+        tableCell(event.origin),
+        tableCell(event.action),
+        tableCell(event.target, "secondary-cell"),
+        statusCell(event.result, event.result),
+        tableCell(`${event.duration_ms} ms`),
+      );
+      return row;
+    });
+    $("audit-rows").replaceChildren(...rows);
+  } catch (error) { setTableMessage("audit-rows", 7, error.message); }
+}
+
+async function loadDoctor() {
+  $("doctor-summary").textContent = "Executando verificações read-only…";
+  const pending = document.createElement("div");
+  pending.className = "doctor-empty";
+  pending.textContent = "Coletando evidências do host…";
+  $("doctor-findings").replaceChildren(pending);
+  try {
+    const report = await request("/api/v1/doctor");
+    $("doctor-summary").textContent = `${report.issues} issue(s) · estado ${report.overall} · ${new Date(report.checked_at * 1000).toLocaleString()}`;
+    const cards = report.findings.map((finding) => {
+      const card = document.createElement("article");
+      card.className = `finding ${finding.severity}`;
+      const header = document.createElement("div");
+      header.className = "finding-header";
+      const title = document.createElement("h3");
+      title.textContent = finding.title;
+      const badge = document.createElement("span");
+      badge.className = "finding-badge";
+      badge.textContent = finding.severity;
+      header.append(title, badge);
+      const details = document.createElement("p");
+      details.textContent = finding.details;
+      const confidence = document.createElement("span");
+      confidence.className = "confidence";
+      confidence.textContent = `CONFIDENCE ${(finding.confidence * 100).toFixed(0)}% · ${finding.category}`;
+      card.append(header, details, confidence);
+      return card;
+    });
+    $("doctor-findings").replaceChildren(...cards);
+  } catch (error) {
+    pending.textContent = error.message;
+  }
+}
+
+function tableCell(text, className = "") {
+  const cell = document.createElement("td");
+  cell.className = className;
+  cell.textContent = String(text);
+  return cell;
+}
+
+function statusCell(stateName, details) {
+  const cell = document.createElement("td");
+  const status = document.createElement("span");
+  status.className = `status-pill ${String(stateName).toLocaleLowerCase()}`;
+  status.textContent = details;
+  cell.append(status);
+  return cell;
+}
+
+function actionButton(label, handler, kind = "") {
+  const button = document.createElement("button");
+  button.className = `action-button ${kind}`.trim();
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", handler);
+  return button;
+}
+
+function setTableMessage(id, columns, message) {
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = columns;
+  cell.className = "table-empty";
+  cell.textContent = message;
+  row.append(cell);
+  $(id).replaceChildren(row);
+}
+
+function openLogDialog(title, source) {
+  $("log-title").textContent = title;
+  $("log-source").textContent = source;
+  $("log-output").textContent = "Carregando…";
+  $("log-dialog").showModal();
+}
+
+function openAiFor(kind, id, label) {
+  document.querySelector('[data-page="ai"]').click();
+  toast(`Contexto preparado: ${kind} ${label || id}.`);
+}
+
+$("refresh-docker").addEventListener("click", loadDocker);
+$("refresh-services").addEventListener("click", loadServices);
+$("refresh-audit").addEventListener("click", loadAudit);
+$("run-doctor").addEventListener("click", loadDoctor);
+$("doctor-ai").addEventListener("click", () => openAiFor("doctor", "latest", "Server Doctor"));
+$("service-filter").addEventListener("input", renderServices);
+$("close-logs").addEventListener("click", () => $("log-dialog").close());
+$("copy-logs").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("log-output").textContent); toast("Logs copiados."); }
+  catch (_) { toast("O navegador bloqueou a cópia.", true); }
+});
 
 window.addEventListener("resize", drawHistory);
 boot();

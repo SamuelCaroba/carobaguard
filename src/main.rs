@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use carobaguard::{AppState, api, config::Config, db, telemetry::TelemetryService};
+use carobaguard::{
+    AppState, api, config::Config, db, docker::DockerService, services::SystemdService,
+    telemetry::TelemetryService,
+};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -24,6 +27,8 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         db,
         telemetry,
+        docker: DockerService::default(),
+        systemd: SystemdService::default(),
     };
 
     let app = api::router(state);
