@@ -13,6 +13,11 @@ const state = {
   aiContext: { kind: "system", target: null, label: "System overview" },
   pendingPermissions: [],
   unrestrictedConfirmed: false,
+  logStream: null,
+  logLines: [],
+  logPaused: false,
+  logTargets: { systemd: [], docker: [] },
+  logRenderTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -81,6 +86,7 @@ $("logout").addEventListener("click", async () => {
   try { await request("/api/v1/auth/logout", { method: "POST", body: "{}" }); } catch (_) { /* expire locally */ }
   if (state.stream) state.stream.close();
   if (state.aiStream) state.aiStream.close();
+  stopLogStream(false);
   state.stream = null;
   state.aiStream = null;
   state.aiSession = null;
@@ -106,6 +112,8 @@ document.querySelectorAll(".nav-item").forEach((button) => {
 function loadPage(page) {
   if (page === "terminal") window.carobaguardTerminal?.activate();
   else window.carobaguardTerminal?.disconnect();
+  if (page === "logs") loadLogs();
+  else stopLogStream(false);
   if (page === "docker") loadDocker();
   if (page === "services") loadServices();
   if (page === "audit") loadAudit();
@@ -437,6 +445,170 @@ async function openServiceLogs(unit) {
   try {
     $("log-output").textContent = await request(`/api/v1/services/${encodeURIComponent(unit)}/logs?lines=500`);
   } catch (error) { $("log-output").textContent = `Erro: ${error.message}`; }
+}
+
+async function loadLogs() {
+  stopLogStream(false);
+  $("stream-log-status").textContent = "Atualizando fontes de log…";
+  const [dockerResult, systemdResult] = await Promise.allSettled([
+    request("/api/v1/docker/containers"),
+    request("/api/v1/services"),
+  ]);
+  state.logTargets.docker = dockerResult.status === "fulfilled"
+    ? dockerResult.value.map((container) => ({ value: container.id, label: container.name }))
+    : [];
+  state.logTargets.systemd = systemdResult.status === "fulfilled"
+    ? systemdResult.value.map((unit) => ({ value: unit.name, label: unit.name }))
+    : [];
+  renderLogTargets();
+  const count = state.logTargets.docker.length + state.logTargets.systemd.length;
+  $("stream-log-status").textContent = count
+    ? `${count} fontes disponíveis · streaming parado`
+    : "Docker e systemd não forneceram fontes de log.";
+}
+
+function renderLogTargets() {
+  const source = $("stream-log-source").value;
+  const previousTarget = $("stream-log-target").value;
+  const targets = state.logTargets[source] || [];
+  const options = targets.map((target) => {
+    const option = document.createElement("option");
+    option.value = target.value;
+    option.textContent = target.label;
+    return option;
+  });
+  if (!options.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Nenhuma fonte disponível";
+    options.push(option);
+  }
+  $("stream-log-target").replaceChildren(...options);
+  if (targets.some((target) => target.value === previousTarget)) {
+    $("stream-log-target").value = previousTarget;
+  }
+}
+
+function startLogStream() {
+  const source = $("stream-log-source").value;
+  const target = $("stream-log-target").value;
+  if (!target) {
+    toast("Selecione uma fonte de log disponível.", true);
+    return;
+  }
+  stopLogStream(false);
+  state.logLines = [];
+  state.logPaused = false;
+  renderStreamLogs();
+  const query = new URLSearchParams({ source, target, tail: "300" });
+  const stream = new EventSource(`/api/v1/logs/events?${query}`);
+  let terminalMessage = false;
+  state.logStream = stream;
+  $("pause-log-stream").disabled = false;
+  $("pause-log-stream").textContent = "Pausar";
+  $("stream-log-status").textContent = `Conectando · ${source} · ${target}`;
+  stream.onopen = () => {
+    if (state.logStream === stream) $("stream-log-status").textContent = `LIVE · ${source} · ${target}`;
+  };
+  stream.addEventListener("line", (event) => {
+    if (state.logStream !== stream) return;
+    try {
+      const message = JSON.parse(event.data);
+      appendStreamLog(message.line || "");
+    } catch (_) { /* ignore malformed event */ }
+  });
+  stream.addEventListener("status", (event) => {
+    if (state.logStream !== stream) return;
+    terminalMessage = true;
+    try { $("stream-log-status").textContent = JSON.parse(event.data).message || "Stream encerrado"; }
+    catch (_) { $("stream-log-status").textContent = "Stream encerrado"; }
+  });
+  stream.addEventListener("stream_error", (event) => {
+    if (state.logStream !== stream) return;
+    terminalMessage = true;
+    try { $("stream-log-status").textContent = JSON.parse(event.data).message || "Falha no stream"; }
+    catch (_) { $("stream-log-status").textContent = "Falha no stream"; }
+  });
+  stream.onerror = () => {
+    if (state.logStream !== stream) return;
+    stream.close();
+    state.logStream = null;
+    $("pause-log-stream").disabled = true;
+    if (!terminalMessage) {
+      $("stream-log-status").textContent = "Stream desconectado";
+    }
+  };
+}
+
+function stopLogStream(showStatus = true) {
+  if (state.logStream) state.logStream.close();
+  state.logStream = null;
+  state.logPaused = false;
+  const pause = $("pause-log-stream");
+  if (pause) {
+    pause.disabled = true;
+    pause.textContent = "Pausar";
+  }
+  if (showStatus && $("stream-log-status")) $("stream-log-status").textContent = "Stream parado";
+}
+
+function appendStreamLog(line) {
+  state.logLines.push(String(line));
+  if (state.logLines.length > 5000) state.logLines.splice(0, state.logLines.length - 5000);
+  $("stream-log-count").textContent = `${state.logLines.length.toLocaleString()} linhas`;
+  if (state.logPaused || state.logRenderTimer) return;
+  state.logRenderTimer = window.setTimeout(() => {
+    state.logRenderTimer = null;
+    renderStreamLogs();
+  }, 100);
+}
+
+function visibleStreamLogs() {
+  const filter = $("stream-log-filter").value.trim().toLocaleLowerCase();
+  const level = $("stream-log-level").value;
+  return state.logLines.filter((line) => {
+    if (filter && !line.toLocaleLowerCase().includes(filter)) return false;
+    return level === "all" || classifyLogLevel(line) === level;
+  });
+}
+
+function classifyLogLevel(line) {
+  const value = line.toLocaleLowerCase();
+  if (/\b(error|fatal|failed|failure|panic)\b/.test(value)) return "error";
+  if (/\b(warn|warning)\b/.test(value)) return "warning";
+  return "info";
+}
+
+function renderStreamLogs() {
+  const output = $("stream-log-output");
+  const follow = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+  const lines = visibleStreamLogs();
+  output.textContent = lines.length ? lines.join("\n") : "Nenhuma linha corresponde aos filtros.";
+  if (follow) output.scrollTop = output.scrollHeight;
+}
+
+function toggleLogPause() {
+  if (!state.logStream) return;
+  state.logPaused = !state.logPaused;
+  $("pause-log-stream").textContent = state.logPaused ? "Continuar" : "Pausar";
+  $("stream-log-status").textContent = state.logPaused ? "PAUSED · recebimento continua com buffer limitado" : "LIVE";
+  if (!state.logPaused) renderStreamLogs();
+}
+
+function clearStreamLogs() {
+  state.logLines = [];
+  $("stream-log-count").textContent = "0 linhas";
+  renderStreamLogs();
+}
+
+function exportStreamLogs() {
+  const content = visibleStreamLogs().join("\n");
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `carobaguard-logs-${new Date().toISOString().replaceAll(":", "-")}.log`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
 }
 
 async function loadAudit() {
@@ -792,6 +964,22 @@ function modeLabel(mode) { return mode === "read_only" ? "Read Only" : mode === 
 
 $("refresh-docker").addEventListener("click", loadDocker);
 $("refresh-services").addEventListener("click", loadServices);
+$("refresh-log-sources").addEventListener("click", loadLogs);
+$("start-log-stream").addEventListener("click", startLogStream);
+$("pause-log-stream").addEventListener("click", toggleLogPause);
+$("clear-stream-logs").addEventListener("click", clearStreamLogs);
+$("export-stream-logs").addEventListener("click", exportStreamLogs);
+$("stream-log-source").addEventListener("change", () => {
+  stopLogStream(false);
+  clearStreamLogs();
+  renderLogTargets();
+});
+$("stream-log-target").addEventListener("change", () => {
+  stopLogStream(false);
+  clearStreamLogs();
+});
+$("stream-log-filter").addEventListener("input", renderStreamLogs);
+$("stream-log-level").addEventListener("change", renderStreamLogs);
 $("refresh-audit").addEventListener("click", loadAudit);
 $("run-doctor").addEventListener("click", loadDoctor);
 $("doctor-ai").addEventListener("click", () => openAiFor("doctor", "latest", "Server Doctor"));

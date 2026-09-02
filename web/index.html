@@ -155,7 +155,21 @@
             </table>
           </div>
         </section>
-        <section class="page" id="page-logs"><div class="empty-state"><p class="eyebrow">STREAMING</p><h2>Logs</h2><p>Use “Logs” em um container ou serviço para abrir uma leitura limitada.</p></div></section>
+        <section class="page" id="page-logs">
+          <div class="section-toolbar">
+            <div><p class="eyebrow">BOUNDED SSE STREAM</p><h2>Logs</h2><p id="stream-log-status" class="section-status">Selecione uma origem para iniciar.</p></div>
+            <div class="toolbar-actions"><button id="refresh-log-sources" class="secondary">Atualizar fontes</button><button id="start-log-stream" class="primary compact-button">Iniciar stream</button></div>
+          </div>
+          <div class="log-stream-controls">
+            <label>Origem<select id="stream-log-source"><option value="systemd">systemd journal</option><option value="docker">Docker container</option></select></label>
+            <label>Alvo<select id="stream-log-target"><option value="">Carregando…</option></select></label>
+            <label>Busca<input id="stream-log-filter" placeholder="Texto, PID, mensagem…"></label>
+            <label>Nível<select id="stream-log-level"><option value="all">Todos</option><option value="error">Error</option><option value="warning">Warning</option><option value="info">Info</option></select></label>
+            <div class="log-stream-actions"><button id="pause-log-stream" class="secondary" disabled>Pausar</button><button id="clear-stream-logs" class="secondary">Limpar</button><button id="export-stream-logs" class="secondary">Exportar</button></div>
+          </div>
+          <div class="stream-log-shell"><pre id="stream-log-output" tabindex="0">Nenhum stream ativo.</pre></div>
+          <div class="terminal-footer"><span id="stream-log-count">0 linhas</span><span>Máximo no navegador: 5.000 linhas · linhas do backend: 64 KiB</span></div>
+        </section>
         <section class="page" id="page-terminal">
           <div class="terminal-shell">
             <div class="terminal-heading">

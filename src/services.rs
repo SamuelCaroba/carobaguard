@@ -225,6 +225,26 @@ impl SystemdService {
         Ok(String::from_utf8_lossy(&output).into_owned())
     }
 
+    pub(crate) fn follow_logs_command(&self, unit: &str, lines: usize) -> anyhow::Result<Command> {
+        validate_unit(unit)?;
+        let lines = lines.clamp(1, 2000).to_string();
+        let mut command = Command::new(&self.journalctl);
+        command.args([
+            "--unit",
+            unit,
+            "--lines",
+            &lines,
+            "--follow",
+            "--no-pager",
+            "--output=short-iso-precise",
+        ]);
+        command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        Ok(command)
+    }
+
     async fn command_output(&self, args: &[&str]) -> anyhow::Result<Vec<u8>> {
         let output = tokio::time::timeout(
             Duration::from_secs(20),

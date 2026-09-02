@@ -24,6 +24,9 @@ paths receive allowlist or canonicalization checks before privileged use.
   to user, session, scope and exact action; unrestricted remains visible and all
   actions are audited.
 - Log/metric injection: the UI renders data through text nodes, never `innerHTML`.
+- Log streaming exhaustion: concurrent followers, retained browser lines, backend
+  line/frame sizes and stream lifetime are bounded. Slow clients apply channel and
+  pipe backpressure; disconnecting drops the Docker body or kills/reaps journalctl.
 - Database/disk exhaustion: telemetry retention is bounded; streaming readers
   cap lines and bytes; audit data has explicit operator-managed retention.
 - Local privilege escalation: the web daemon must not run as root by default;

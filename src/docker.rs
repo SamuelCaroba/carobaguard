@@ -209,6 +209,38 @@ impl DockerService {
         Ok(decode_docker_log_stream(&body))
     }
 
+    pub(crate) async fn follow_logs(
+        &self,
+        id: &str,
+        tail: usize,
+        since: i64,
+    ) -> anyhow::Result<hyper::body::Incoming> {
+        validate_container_id(id)?;
+        let tail = tail.clamp(1, 2000);
+        let path = format!(
+            "/containers/{id}/logs?stdout=true&stderr=true&timestamps=true&follow=true&tail={tail}&since={}",
+            since.max(0)
+        );
+        let uri: hyper::Uri = Uri::new(&self.socket, &path).into();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header("host", "localhost")
+            .body(Full::new(Bytes::new()))?;
+        let response = self.client.request(request).await?;
+        let status = response.status();
+        if !status.is_success() {
+            let response_body =
+                collect_limited(response.into_body(), MAX_DOCKER_RESPONSE_BYTES).await?;
+            let message = serde_json::from_slice::<serde_json::Value>(&response_body)
+                .ok()
+                .and_then(|value| value["message"].as_str().map(ToOwned::to_owned))
+                .unwrap_or_else(|| String::from_utf8_lossy(&response_body).into_owned());
+            anyhow::bail!("Docker API returned {status}: {message}");
+        }
+        Ok(response.into_body())
+    }
+
     pub async fn action(&self, id: &str, action: &ContainerAction) -> anyhow::Result<()> {
         validate_container_id(id)?;
         let operation = match action {

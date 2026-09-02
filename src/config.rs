@@ -16,6 +16,7 @@ pub struct Config {
     pub terminal_max_sessions: usize,
     pub terminal_idle_timeout_seconds: u64,
     pub terminal_max_duration_seconds: u64,
+    pub log_max_streams: usize,
 }
 
 impl Config {
@@ -57,6 +58,10 @@ impl Config {
         if terminal_max_duration_seconds < 300 {
             bail!("CAROBAGUARD_TERMINAL_MAX_DURATION_SECONDS must be at least 300");
         }
+        let log_max_streams = parse_integer("CAROBAGUARD_LOG_MAX_STREAMS", 8)?;
+        if !(1..=64).contains(&log_max_streams) {
+            bail!("CAROBAGUARD_LOG_MAX_STREAMS must be between 1 and 64");
+        }
 
         Ok(Self {
             bind: SocketAddr::new(host, port),
@@ -67,6 +72,7 @@ impl Config {
             terminal_max_sessions,
             terminal_idle_timeout_seconds,
             terminal_max_duration_seconds,
+            log_max_streams,
         })
     }
 
@@ -81,6 +87,7 @@ impl Config {
             terminal_max_sessions: 4,
             terminal_idle_timeout_seconds: 900,
             terminal_max_duration_seconds: 14_400,
+            log_max_streams: 8,
         }
     }
 }

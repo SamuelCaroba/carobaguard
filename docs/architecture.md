@@ -39,6 +39,9 @@ for the versioned integration contract.
 - On-demand host PTYs behind an authenticated WebSocket. The browser can only
   exchange terminal bytes and resize messages; it cannot select an executable or
   bypass the daemon's OS identity.
+- Bounded SSE log streams for Docker and systemd. Docker's multiplexed frames are
+  decoded incrementally; journal followers use fixed argument vectors and are
+  killed when their authenticated client disconnects.
 
 ## Terminal security invariants
 

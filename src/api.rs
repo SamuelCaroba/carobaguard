@@ -18,7 +18,7 @@ use crate::{
     auth::{self, AuthUser, Role},
     docker, doctor,
     error::{ApiError, ApiResult},
-    opencode, services,
+    logs, opencode, services,
     telemetry::{SystemSnapshot, TelemetryProfile},
     terminal,
 };
@@ -75,6 +75,7 @@ pub fn router(state: AppState) -> Router {
             get(opencode::scope_permissions).post(opencode::set_scope_permission),
         )
         .route("/api/v1/terminal/ws", get(terminal::websocket))
+        .route("/api/v1/logs/events", get(logs::events))
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())

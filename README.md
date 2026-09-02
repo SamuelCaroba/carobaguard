@@ -34,6 +34,7 @@ or on a trusted VPN/LAN.
 | `CAROBAGUARD_TERMINAL_MAX_SESSIONS` | `4` | Maximum concurrent PTY sessions |
 | `CAROBAGUARD_TERMINAL_IDLE_TIMEOUT_SECONDS` | `900` | Close terminals without user input |
 | `CAROBAGUARD_TERMINAL_MAX_DURATION_SECONDS` | `14400` | Absolute terminal lifetime |
+| `CAROBAGUARD_LOG_MAX_STREAMS` | `8` | Maximum concurrent Docker/journal streams |
 
 ## Implemented foundation
 
@@ -62,6 +63,8 @@ or on a trusted VPN/LAN.
 - host PTY terminal over an authenticated same-origin WebSocket, with backend
   RBAC, CSRF-bound subprotocol, bounded sessions, process cleanup and metadata-only
   audit records.
+- central SSE log viewer for Docker and systemd with bounded lines, backpressure,
+  pause/resume, text and severity filters, export and disconnect cleanup.
 
 ## Development
 

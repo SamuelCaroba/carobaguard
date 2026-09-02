@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use carobaguard::{
-    AppState, api, config::Config, db, docker::DockerService, opencode::OpenCodeManager,
-    services::SystemdService, telemetry::TelemetryService, terminal::TerminalService,
+    AppState, api, config::Config, db, docker::DockerService, logs::LogService,
+    opencode::OpenCodeManager, services::SystemdService, telemetry::TelemetryService,
+    terminal::TerminalService,
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -25,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let telemetry = TelemetryService::start(db.clone()).await?;
     let opencode = OpenCodeManager::new(db.clone());
     let terminal = TerminalService::new(config.terminal_max_sessions);
+    let logs = LogService::new(config.log_max_streams);
     let state = AppState {
         config: config.clone(),
         db,
@@ -33,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         systemd: SystemdService::default(),
         opencode,
         terminal,
+        logs,
     };
 
     let app = api::router(state);
