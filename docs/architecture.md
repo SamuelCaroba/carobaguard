@@ -36,6 +36,26 @@ for the versioned integration contract.
 - Read-only Server Doctor and a bounded, redacting AI Context Engine.
 - On-demand OpenCode lifecycle, persistent session mappings, permission approval
   relay, tool execution auditing and a static AI workspace in the web UI.
+- On-demand host PTYs behind an authenticated WebSocket. The browser can only
+  exchange terminal bytes and resize messages; it cannot select an executable or
+  bypass the daemon's OS identity.
+
+## Terminal security invariants
+
+- Only Operator and Admin roles can upgrade a terminal connection. The upgrade
+  requires the normal session cookie, an exact same-origin check and the current
+  CSRF token transported as a WebSocket subprotocol, never in the URL.
+- The backend chooses an absolute executable shell and passes it directly to the
+  PTY API without shell-command construction. The terminal inherits exactly the
+  daemon account's OS privileges.
+- Concurrent sessions, input message size, terminal dimensions, idle time and
+  absolute lifetime are bounded. Slow WebSocket writes have a finite timeout.
+- Closing the browser, leaving the terminal page, reaching a timeout or stopping
+  the shell kills and reaps the managed child. A bounded channel applies
+  backpressure to PTY output rather than accumulating it in memory.
+- Session open/close, actor, source, duration, outcome and byte counts are
+  audited. Keystrokes and PTY output are deliberately never persisted because
+  they commonly contain passwords, tokens and other secrets.
 
 ## OpenCode security invariants
 

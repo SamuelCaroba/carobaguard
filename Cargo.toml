@@ -21,6 +21,7 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 hyperlocal = "0.9"
 libc = "0.2"
 mime_guess = "2.0"
+portable-pty = "0.9.0"
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rust-embed = "8.7"

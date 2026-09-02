@@ -10,6 +10,7 @@ pub mod error;
 pub mod opencode;
 pub mod services;
 pub mod telemetry;
+pub mod terminal;
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use opencode::OpenCodeManager;
 use services::SystemdService;
 use sqlx::SqlitePool;
 use telemetry::TelemetryService;
+use terminal::TerminalService;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,4 +30,5 @@ pub struct AppState {
     pub docker: DockerService,
     pub systemd: SystemdService,
     pub opencode: OpenCodeManager,
+    pub terminal: TerminalService,
 }

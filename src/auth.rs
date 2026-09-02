@@ -224,6 +224,10 @@ pub fn verify_csrf(user: &AuthUser, headers: &HeaderMap) -> ApiResult<()> {
         .get("x-csrf-token")
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| ApiError::forbidden("missing CSRF token"))?;
+    verify_csrf_token(user, supplied)
+}
+
+pub fn verify_csrf_token(user: &AuthUser, supplied: &str) -> ApiResult<()> {
     if token_hash(supplied) != token_hash(&user.csrf_token) {
         return Err(ApiError::forbidden("invalid CSRF token"));
     }
@@ -375,5 +379,13 @@ mod tests {
             cookie_value(&headers, SESSION_COOKIE).as_deref(),
             Some("right")
         );
+    }
+
+    #[test]
+    fn role_hierarchy_denies_viewers_and_ai_agents_mutation_access() {
+        assert!(Role::Admin.require(Role::Operator).is_ok());
+        assert!(Role::Operator.require(Role::Operator).is_ok());
+        assert!(Role::Viewer.require(Role::Operator).is_err());
+        assert!(Role::AiAgent.require(Role::Viewer).is_err());
     }
 }

@@ -18,7 +18,8 @@ paths receive allowlist or canonicalization checks before privileged use.
   HttpOnly and SameSite cookies are supported; TLS termination is mandatory on
   untrusted networks.
 - CSRF/WebSocket hijacking: mutation requests require the session CSRF token;
-  terminal upgrades additionally validate Origin and token.
+  terminal upgrades additionally require an exact same-origin match and carry the
+  token in a negotiated subprotocol so it is not exposed in URL logs.
 - AI confused-deputy attacks: read-only is default; approval decisions are tied
   to user, session, scope and exact action; unrestricted remains visible and all
   actions are audited.
@@ -27,4 +28,7 @@ paths receive allowlist or canonicalization checks before privileged use.
   cap lines and bytes; audit data has explicit operator-managed retention.
 - Local privilege escalation: the web daemon must not run as root by default;
   future helper IPC will authenticate peers and use a fixed operation protocol.
-
+- Terminal abuse: only Operator/Admin can allocate bounded PTYs. The backend
+  selects the shell, caps message and resize inputs, times out slow clients, and
+  kills/reaps the child on disconnect. Terminal contents are excluded from audit
+  storage to avoid creating a second secret database.

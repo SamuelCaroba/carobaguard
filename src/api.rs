@@ -20,6 +20,7 @@ use crate::{
     error::{ApiError, ApiResult},
     opencode, services,
     telemetry::{SystemSnapshot, TelemetryProfile},
+    terminal,
 };
 
 #[derive(RustEmbed)]
@@ -73,6 +74,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/opencode/scopes",
             get(opencode::scope_permissions).post(opencode::set_scope_permission),
         )
+        .route("/api/v1/terminal/ws", get(terminal::websocket))
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
@@ -181,7 +183,7 @@ async fn configure_metrics(
 async fn static_asset(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let requested = if path.is_empty() { "index.html" } else { path };
-    let Some(asset) = WebAssets::get(requested).or_else(|| WebAssets::get("index.html")) else {
+    let Some(asset) = WebAssets::get(requested) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
     let mime = mime_guess::from_path(requested).first_or_octet_stream();
@@ -206,4 +208,22 @@ async fn static_asset(uri: Uri) -> Response {
         HeaderValue::from_static("no-referrer"),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn missing_static_assets_are_not_disguised_as_html() {
+        let response = static_asset(Uri::from_static("/missing.js")).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = static_asset(Uri::from_static("/")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/html"
+        );
+    }
 }

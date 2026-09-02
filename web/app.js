@@ -32,6 +32,7 @@ async function request(path, options = {}) {
 }
 
 function showLogin() {
+  window.carobaguardTerminal?.reset();
   $("app").hidden = true;
   $("login-view").hidden = false;
   $("password").focus();
@@ -76,6 +77,7 @@ $("login-form").addEventListener("submit", async (event) => {
 });
 
 $("logout").addEventListener("click", async () => {
+  window.carobaguardTerminal?.reset();
   try { await request("/api/v1/auth/logout", { method: "POST", body: "{}" }); } catch (_) { /* expire locally */ }
   if (state.stream) state.stream.close();
   if (state.aiStream) state.aiStream.close();
@@ -102,12 +104,18 @@ document.querySelectorAll(".nav-item").forEach((button) => {
 });
 
 function loadPage(page) {
+  if (page === "terminal") window.carobaguardTerminal?.activate();
+  else window.carobaguardTerminal?.disconnect();
   if (page === "docker") loadDocker();
   if (page === "services") loadServices();
   if (page === "audit") loadAudit();
   if (page === "doctor") loadDoctor();
   if (page === "ai") loadAi();
 }
+
+window.addEventListener("carobaguard:toast", (event) => {
+  toast(event.detail?.message || "Erro no terminal.", Boolean(event.detail?.error));
+});
 
 $("performance-mode").addEventListener("change", async (event) => {
   const enabled = event.currentTarget.checked;

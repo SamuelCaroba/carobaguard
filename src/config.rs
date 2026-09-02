@@ -13,6 +13,9 @@ pub struct Config {
     pub database_url: String,
     pub cookie_secure: bool,
     pub session_ttl_seconds: i64,
+    pub terminal_max_sessions: usize,
+    pub terminal_idle_timeout_seconds: u64,
+    pub terminal_max_duration_seconds: u64,
 }
 
 impl Config {
@@ -40,6 +43,20 @@ impl Config {
         if session_ttl_seconds < 300 {
             bail!("CAROBAGUARD_SESSION_TTL_SECONDS must be at least 300");
         }
+        let terminal_max_sessions = parse_integer("CAROBAGUARD_TERMINAL_MAX_SESSIONS", 4)?;
+        if !(1..=32).contains(&terminal_max_sessions) {
+            bail!("CAROBAGUARD_TERMINAL_MAX_SESSIONS must be between 1 and 32");
+        }
+        let terminal_idle_timeout_seconds =
+            parse_integer("CAROBAGUARD_TERMINAL_IDLE_TIMEOUT_SECONDS", 900)?;
+        if terminal_idle_timeout_seconds < 60 {
+            bail!("CAROBAGUARD_TERMINAL_IDLE_TIMEOUT_SECONDS must be at least 60");
+        }
+        let terminal_max_duration_seconds =
+            parse_integer("CAROBAGUARD_TERMINAL_MAX_DURATION_SECONDS", 14_400)?;
+        if terminal_max_duration_seconds < 300 {
+            bail!("CAROBAGUARD_TERMINAL_MAX_DURATION_SECONDS must be at least 300");
+        }
 
         Ok(Self {
             bind: SocketAddr::new(host, port),
@@ -47,6 +64,9 @@ impl Config {
             database_url,
             cookie_secure,
             session_ttl_seconds,
+            terminal_max_sessions,
+            terminal_idle_timeout_seconds,
+            terminal_max_duration_seconds,
         })
     }
 
@@ -58,6 +78,9 @@ impl Config {
             data_dir,
             cookie_secure: false,
             session_ttl_seconds: 3600,
+            terminal_max_sessions: 4,
+            terminal_idle_timeout_seconds: 900,
+            terminal_max_duration_seconds: 14_400,
         }
     }
 }
@@ -80,4 +103,19 @@ fn parse_bool(name: &str, default: bool) -> anyhow::Result<bool> {
         "0" | "false" | "no" | "off" => Ok(false),
         _ => bail!("{name} must be true or false"),
     }
+}
+
+fn parse_integer<T>(name: &str, default: T) -> anyhow::Result<T>
+where
+    T: std::str::FromStr + Copy,
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    env::var(name).map_or_else(
+        |_| Ok(default),
+        |value| {
+            value
+                .parse::<T>()
+                .with_context(|| format!("{name} must be an integer"))
+        },
+    )
 }

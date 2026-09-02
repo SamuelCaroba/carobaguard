@@ -6,8 +6,7 @@ and SQLite database; Docker, Prometheus, Grafana, Node.js and Redis are not runt
 requirements.
 
 > Early development: the authenticated telemetry, Docker, systemd, audit,
-> Server Doctor and on-demand OpenCode flows are operational. The web terminal
-> remains in progress.
+> Server Doctor, secure web terminal and on-demand OpenCode flows are operational.
 
 ## Run from source
 
@@ -32,6 +31,9 @@ or on a trusted VPN/LAN.
 | `CAROBAGUARD_ADMIN_USERNAME` | `admin` | First-run admin |
 | `CAROBAGUARD_ADMIN_PASSWORD` | generated | First-run password (12+ chars) |
 | `CAROBAGUARD_COOKIE_SECURE` | `false` | Require HTTPS cookies |
+| `CAROBAGUARD_TERMINAL_MAX_SESSIONS` | `4` | Maximum concurrent PTY sessions |
+| `CAROBAGUARD_TERMINAL_IDLE_TIMEOUT_SECONDS` | `900` | Close terminals without user input |
+| `CAROBAGUARD_TERMINAL_MAX_DURATION_SECONDS` | `14400` | Absolute terminal lifetime |
 
 ## Implemented foundation
 
@@ -57,6 +59,9 @@ or on a trusted VPN/LAN.
   session mappings, bounded Context Engine and authenticated SSE events;
 - Read Only, Approval and explicitly confirmed Unrestricted AI permission modes,
   including deduplicated tool execution records in the Audit Log.
+- host PTY terminal over an authenticated same-origin WebSocket, with backend
+  RBAC, CSRF-bound subprotocol, bounded sessions, process cleanup and metadata-only
+  audit records.
 
 ## Development
 

@@ -7,7 +7,9 @@
     <meta name="theme-color" content="#0b1015">
     <title>CarobaGuard</title>
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/vendor/xterm.css">
     <script src="/app.js" defer></script>
+    <script type="module" src="/terminal.js"></script>
   </head>
   <body>
     <section id="login-view" class="login-shell" hidden>
@@ -154,7 +156,20 @@
           </div>
         </section>
         <section class="page" id="page-logs"><div class="empty-state"><p class="eyebrow">STREAMING</p><h2>Logs</h2><p>Use “Logs” em um container ou serviço para abrir uma leitura limitada.</p></div></section>
-        <section class="page" id="page-terminal"><div class="empty-state terminal-placeholder"><p>$ terminal session pending</p><span>PTY seguro via backend</span></div></section>
+        <section class="page" id="page-terminal">
+          <div class="terminal-shell">
+            <div class="terminal-heading">
+              <div><p class="eyebrow">HOST PTY</p><h2>Terminal seguro</h2><p>Executa com as permissões reais da conta do daemon. Entrada e saída não são armazenadas.</p></div>
+              <div class="terminal-controls">
+                <span id="terminal-status" class="terminal-status" data-state="disconnected"><i></i> Desconectado</span>
+                <button id="terminal-disconnect" class="secondary" disabled>Desconectar</button>
+                <button id="terminal-connect" class="primary compact-button">Conectar</button>
+              </div>
+            </div>
+            <div id="terminal-container" class="terminal-container" tabindex="0" aria-label="Terminal do servidor"></div>
+            <div class="terminal-footer"><span id="terminal-session">Nenhuma sessão ativa</span><span>Timeouts configuráveis · sessões auditadas</span></div>
+          </div>
+        </section>
         <section class="page" id="page-ai">
           <div class="ai-status-bar">
             <div class="agent-identity"><span class="agent-orb"></span><div><p class="eyebrow">OPENCODE HEADLESS</p><h2>AI Agent</h2></div></div>
