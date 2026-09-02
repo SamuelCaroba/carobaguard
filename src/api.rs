@@ -18,7 +18,7 @@ use crate::{
     auth::{self, AuthUser, Role},
     docker, doctor,
     error::{ApiError, ApiResult},
-    services,
+    opencode, services,
     telemetry::{SystemSnapshot, TelemetryProfile},
 };
 
@@ -52,6 +52,27 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/services/{unit}/actions", post(services::action))
         .route("/api/v1/audit", get(audit::list))
         .route("/api/v1/doctor", get(doctor::run))
+        .route("/api/v1/opencode/status", get(opencode::status))
+        .route("/api/v1/opencode/start", post(opencode::start))
+        .route("/api/v1/opencode/stop", post(opencode::stop))
+        .route("/api/v1/opencode/mode", post(opencode::set_mode))
+        .route(
+            "/api/v1/opencode/sessions",
+            get(opencode::sessions).post(opencode::create_session),
+        )
+        .route(
+            "/api/v1/opencode/sessions/{id}/messages",
+            post(opencode::chat),
+        )
+        .route("/api/v1/opencode/events", get(opencode::events))
+        .route(
+            "/api/v1/opencode/permissions/{request_id}",
+            post(opencode::reply_permission),
+        )
+        .route(
+            "/api/v1/opencode/scopes",
+            get(opencode::scope_permissions).post(opencode::set_scope_permission),
+        )
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())

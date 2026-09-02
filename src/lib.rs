@@ -2,10 +2,12 @@ pub mod api;
 pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod context;
 pub mod db;
 pub mod docker;
 pub mod doctor;
 pub mod error;
+pub mod opencode;
 pub mod services;
 pub mod telemetry;
 
@@ -13,6 +15,7 @@ use std::sync::Arc;
 
 use config::Config;
 use docker::DockerService;
+use opencode::OpenCodeManager;
 use services::SystemdService;
 use sqlx::SqlitePool;
 use telemetry::TelemetryService;
@@ -24,4 +27,5 @@ pub struct AppState {
     pub telemetry: TelemetryService,
     pub docker: DockerService,
     pub systemd: SystemdService,
+    pub opencode: OpenCodeManager,
 }

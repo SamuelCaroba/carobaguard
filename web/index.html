@@ -155,7 +155,39 @@
         </section>
         <section class="page" id="page-logs"><div class="empty-state"><p class="eyebrow">STREAMING</p><h2>Logs</h2><p>Use “Logs” em um container ou serviço para abrir uma leitura limitada.</p></div></section>
         <section class="page" id="page-terminal"><div class="empty-state terminal-placeholder"><p>$ terminal session pending</p><span>PTY seguro via backend</span></div></section>
-        <section class="page" id="page-ai"><div class="empty-state"><p class="eyebrow">OPENCODE</p><h2>AI Agent</h2><p>Status: Sleeping · RAM ~0</p></div></section>
+        <section class="page" id="page-ai">
+          <div class="ai-status-bar">
+            <div class="agent-identity"><span class="agent-orb"></span><div><p class="eyebrow">OPENCODE HEADLESS</p><h2>AI Agent</h2></div></div>
+            <dl class="agent-stats"><div><dt>Status</dt><dd id="ai-status">Sleeping</dd></div><div><dt>RAM</dt><dd id="ai-memory">~0 B</dd></div><div><dt>Version</dt><dd id="ai-version">—</dd></div><div><dt>Idle timeout</dt><dd id="ai-timeout">—</dd></div></dl>
+            <div class="toolbar-actions"><button id="stop-ai" class="secondary">Stop</button><button id="start-ai" class="primary compact-button">Start</button></div>
+          </div>
+          <div id="unrestricted-warning" class="danger-banner" hidden><strong>WARNING · UNRESTRICTED MODE</strong><span>OpenCode currently has full control allowed by the CarobaGuard OS account. Authentication, RBAC and Audit Log remain enforced.</span></div>
+          <div class="ai-layout">
+            <aside class="ai-settings panel">
+              <p class="eyebrow">AGENT CONFIGURATION</p>
+              <label for="ai-project">Project</label><input id="ai-project" placeholder="Current daemon directory">
+              <span class="field-label">Permission mode</span>
+              <label class="radio-row"><input type="radio" name="ai-mode" value="read_only" checked><span><strong>Read Only</strong><small>Files and supplied context; mutations denied</small></span></label>
+              <label class="radio-row"><input type="radio" name="ai-mode" value="approval"><span><strong>Require Approval</strong><small>Every mutating tool call pauses</small></span></label>
+              <label class="radio-row danger-radio"><input type="radio" name="ai-mode" value="unrestricted"><span><strong>Unrestricted</strong><small>No per-action confirmation</small></span></label>
+              <div class="context-box"><span>CONTEXT</span><strong id="ai-context">System overview</strong><small>Context is selected, redacted and capped server-side.</small></div>
+              <button id="new-ai-session" class="secondary full">New session</button>
+              <div class="session-list" id="ai-sessions"><p class="empty">No sessions yet.</p></div>
+            </aside>
+            <div class="chat-panel">
+              <div id="approval-card" class="approval-card" hidden>
+                <div><p class="eyebrow">APPROVAL REQUIRED</p><strong id="approval-title">OpenCode wants to execute an action</strong><pre id="approval-details"></pre></div>
+                <div class="approval-actions"><button id="reject-permission" class="secondary">Reject</button><button id="approve-permission" class="primary compact-button">Approve once</button></div>
+              </div>
+              <div id="chat-messages" class="chat-messages"><div class="agent-message"><span>OpenCode</span><p>Agent sleeping. Start it or create a session to investigate this server.</p></div></div>
+              <form id="chat-form" class="chat-input">
+                <label for="chat-prompt" class="sr-only">Mensagem para OpenCode</label>
+                <textarea id="chat-prompt" rows="3" placeholder="Ask OpenCode about this server…"></textarea>
+                <div><span id="chat-hint">Read Only · context automático</span><button type="submit" class="primary compact-button">Send</button></div>
+              </form>
+            </div>
+          </div>
+        </section>
         <section class="page" id="page-doctor">
           <div class="section-toolbar"><div><p class="eyebrow">READ-ONLY AUDIT</p><h2>Server Doctor</h2><p id="doctor-summary" class="section-status">Execute uma auditoria baseada em evidências do host.</p></div><div class="toolbar-actions"><button id="doctor-ai" class="secondary">Analyze with OpenCode</button><button id="run-doctor" class="primary compact-button">Executar auditoria</button></div></div>
           <div id="doctor-findings" class="doctor-grid"><div class="doctor-empty">A auditoria não modifica o servidor.</div></div>

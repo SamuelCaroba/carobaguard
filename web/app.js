@@ -7,6 +7,12 @@ const state = {
   stream: null,
   currentProfile: "balanced",
   units: [],
+  aiSession: null,
+  aiStream: null,
+  aiMode: "read_only",
+  aiContext: { kind: "system", target: null, label: "System overview" },
+  pendingPermissions: [],
+  unrestrictedConfirmed: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -72,7 +78,14 @@ $("login-form").addEventListener("submit", async (event) => {
 $("logout").addEventListener("click", async () => {
   try { await request("/api/v1/auth/logout", { method: "POST", body: "{}" }); } catch (_) { /* expire locally */ }
   if (state.stream) state.stream.close();
+  if (state.aiStream) state.aiStream.close();
+  state.stream = null;
+  state.aiStream = null;
+  state.aiSession = null;
+  clearPendingPermissions();
+  state.unrestrictedConfirmed = false;
   state.csrf = "";
+  state.user = null;
   showLogin();
 });
 
@@ -93,6 +106,7 @@ function loadPage(page) {
   if (page === "services") loadServices();
   if (page === "audit") loadAudit();
   if (page === "doctor") loadDoctor();
+  if (page === "ai") loadAi();
 }
 
 $("performance-mode").addEventListener("change", async (event) => {
@@ -519,15 +533,269 @@ function openLogDialog(title, source) {
 }
 
 function openAiFor(kind, id, label) {
+  state.aiContext = { kind, target: id, label: `${kind} · ${label || id}` };
+  $("ai-context").textContent = state.aiContext.label;
   document.querySelector('[data-page="ai"]').click();
   toast(`Contexto preparado: ${kind} ${label || id}.`);
 }
+
+async function loadAi() {
+  try {
+    const [status, sessions] = await Promise.all([
+      request("/api/v1/opencode/status"),
+      request("/api/v1/opencode/sessions"),
+    ]);
+    renderAiStatus(status);
+    renderAiSessions(sessions);
+    ensureAiEventStream();
+  } catch (error) { toast(error.message, true); }
+}
+
+function renderAiStatus(status) {
+  state.aiMode = status.permission_mode;
+  $("ai-status").textContent = titleCase(status.phase);
+  $("ai-memory").textContent = status.phase === "sleeping" ? "~0 B" : bytes(status.memory_bytes);
+  $("ai-version").textContent = status.version || (status.installed ? "installed" : "not installed");
+  $("ai-timeout").textContent = `${status.idle_timeout_seconds}s`;
+  $("start-ai").disabled = status.phase === "starting";
+  $("stop-ai").disabled = status.phase === "sleeping";
+  if (status.project_path) $("ai-project").value = status.project_path;
+  setSelectedAiMode(status.permission_mode);
+  $("unrestricted-warning").hidden = status.permission_mode !== "unrestricted";
+  $("chat-hint").textContent = `${modeLabel(status.permission_mode)} · context automático`;
+  if (status.error) toast(status.error, true);
+}
+
+function renderAiSessions(sessions) {
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No sessions yet.";
+    $("ai-sessions").replaceChildren(empty);
+    return;
+  }
+  const buttons = sessions.map((session) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `session-item${state.aiSession && state.aiSession.id === session.id ? " active" : ""}`;
+    const title = document.createElement("strong");
+    title.textContent = session.title;
+    const metadata = document.createElement("small");
+    metadata.textContent = `${session.permission_mode} · ${new Date(session.last_active_at * 1000).toLocaleString()}`;
+    button.append(title, metadata);
+    button.addEventListener("click", () => {
+      state.aiSession = session;
+      renderAiSessions(sessions);
+      setSelectedAiMode(session.permission_mode);
+      $("ai-project").value = session.project_path || "";
+      addChatMessage("agent", `Session selected: ${session.title}`);
+    });
+    return button;
+  });
+  $("ai-sessions").replaceChildren(...buttons);
+}
+
+function selectedAiMode() {
+  return document.querySelector('input[name="ai-mode"]:checked').value;
+}
+
+function setSelectedAiMode(mode) {
+  const radio = document.querySelector(`input[name="ai-mode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+}
+
+async function confirmationFor(mode) {
+  if (mode !== "unrestricted") return null;
+  if (state.unrestrictedConfirmed) return "I understand OpenCode will have full control";
+  const phrase = window.prompt('Digite exatamente "I understand OpenCode will have full control" para ativar controle irrestrito:');
+  if (phrase !== "I understand OpenCode will have full control") throw new Error("Confirmação irrestrita não corresponde.");
+  return phrase;
+}
+
+async function changeAiMode(mode) {
+  const previous = state.aiMode;
+  try {
+    const confirmation = await confirmationFor(mode);
+    await request("/api/v1/opencode/mode", {
+      method: "POST",
+      body: JSON.stringify({ permission_mode: mode, confirmation }),
+    });
+    state.aiMode = mode;
+    state.unrestrictedConfirmed = mode === "unrestricted";
+    state.aiSession = null;
+    clearPendingPermissions();
+    $("unrestricted-warning").hidden = mode !== "unrestricted";
+    $("chat-hint").textContent = `${modeLabel(mode)} · context automático`;
+    renderAiStatus(await request("/api/v1/opencode/status"));
+    toast(`AI permission mode: ${modeLabel(mode)}. Agent stopped to enforce the new policy.`);
+  } catch (error) {
+    setSelectedAiMode(previous);
+    toast(error.message, true);
+  }
+}
+
+async function startAi() {
+  const mode = selectedAiMode();
+  try {
+    const confirmation = await confirmationFor(mode);
+    $("ai-status").textContent = "Starting";
+    const project = $("ai-project").value.trim();
+    const status = await request("/api/v1/opencode/start", {
+      method: "POST",
+      body: JSON.stringify({ project_path: project || null, permission_mode: mode, confirmation }),
+    });
+    if (mode === "unrestricted") state.unrestrictedConfirmed = true;
+    renderAiStatus(status);
+    toast("OpenCode ready on loopback.");
+  } catch (error) { $("ai-status").textContent = "Error"; toast(error.message, true); }
+}
+
+async function stopAi() {
+  try {
+    await request("/api/v1/opencode/stop", { method: "POST", body: "{}" });
+    clearPendingPermissions();
+    renderAiStatus(await request("/api/v1/opencode/status"));
+    toast("OpenCode stopped; session state remains persisted.");
+  } catch (error) { toast(error.message, true); }
+}
+
+async function createAiSession() {
+  const mode = selectedAiMode();
+  try {
+    const confirmation = await confirmationFor(mode);
+    const project = $("ai-project").value.trim();
+    const session = await request("/api/v1/opencode/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        title: state.aiContext.label,
+        project_path: project || null,
+        permission_mode: mode,
+        confirmation,
+      }),
+    });
+    if (mode === "unrestricted") state.unrestrictedConfirmed = true;
+    state.aiSession = session;
+    addChatMessage("agent", `Session ready in ${session.project_path}. Permission mode: ${session.permission_mode}.`);
+    await loadAi();
+    return session;
+  } catch (error) { toast(error.message, true); throw error; }
+}
+
+async function sendChat(event) {
+  event.preventDefault();
+  const input = $("chat-prompt");
+  const message = input.value.trim();
+  if (!message) return;
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  addChatMessage("user", message);
+  input.value = "";
+  try {
+    const session = state.aiSession || await createAiSession();
+    const response = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        message,
+        context: { kind: state.aiContext.kind, target: state.aiContext.target },
+      }),
+    });
+    const text = Array.isArray(response.parts)
+      ? response.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n")
+      : "";
+    addChatMessage("agent", text || JSON.stringify(response, null, 2));
+  } catch (error) { addChatMessage("agent", `Error: ${error.message}`); }
+  finally { button.disabled = false; input.focus(); }
+}
+
+function addChatMessage(kind, text) {
+  const item = document.createElement("div");
+  item.className = kind === "user" ? "user-message" : "agent-message";
+  const author = document.createElement("span");
+  author.textContent = kind === "user" ? (state.user ? state.user.username : "User") : "OpenCode";
+  const content = document.createElement("p");
+  content.textContent = text;
+  item.append(author, content);
+  $("chat-messages").append(item);
+  $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
+}
+
+function ensureAiEventStream() {
+  if (state.aiStream) return;
+  state.aiStream = new EventSource("/api/v1/opencode/events");
+  const permissionHandler = (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      const details = value.properties || {};
+      const id = details.id || details.requestID;
+      if (id && !state.pendingPermissions.some((pending) => (pending.id || pending.requestID) === id)) {
+        state.pendingPermissions.push(details);
+      }
+      renderPendingPermission();
+    } catch (_) { /* ignore malformed events */ }
+  };
+  state.aiStream.addEventListener("permission.asked", permissionHandler);
+  state.aiStream.addEventListener("permission.v2.asked", permissionHandler);
+  state.aiStream.addEventListener("session.status", (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      $("ai-status").textContent = titleCase(value.properties.status.type || "ready");
+    } catch (_) { /* ignore malformed events */ }
+  });
+}
+
+function renderPendingPermission() {
+  const details = state.pendingPermissions[0];
+  if (!details) {
+    $("approval-card").hidden = true;
+    return;
+  }
+  $("approval-title").textContent = `OpenCode requests: ${details.permission || details.action || "tool action"}`;
+  $("approval-details").textContent = JSON.stringify({
+    queued: state.pendingPermissions.length,
+    patterns: details.patterns,
+    resources: details.resources,
+    metadata: details.metadata,
+  }, null, 2);
+  $("approval-card").hidden = false;
+}
+
+function clearPendingPermissions() {
+  state.pendingPermissions = [];
+  $("approval-card").hidden = true;
+}
+
+async function answerPermission(reply) {
+  const pending = state.pendingPermissions[0];
+  const id = pending && (pending.id || pending.requestID);
+  if (!id) return;
+  try {
+    await request(`/api/v1/opencode/permissions/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ reply, message: null }),
+    });
+    state.pendingPermissions.shift();
+    renderPendingPermission();
+    toast(reply === "reject" ? "OpenCode action rejected." : "OpenCode action approved once.");
+  } catch (error) { toast(error.message, true); }
+}
+
+function titleCase(value) { return String(value || "").replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()); }
+function modeLabel(mode) { return mode === "read_only" ? "Read Only" : mode === "approval" ? "Require Approval" : "Unrestricted"; }
 
 $("refresh-docker").addEventListener("click", loadDocker);
 $("refresh-services").addEventListener("click", loadServices);
 $("refresh-audit").addEventListener("click", loadAudit);
 $("run-doctor").addEventListener("click", loadDoctor);
 $("doctor-ai").addEventListener("click", () => openAiFor("doctor", "latest", "Server Doctor"));
+$("start-ai").addEventListener("click", startAi);
+$("stop-ai").addEventListener("click", stopAi);
+$("new-ai-session").addEventListener("click", () => { createAiSession().catch(() => {}); });
+$("chat-form").addEventListener("submit", sendChat);
+$("approve-permission").addEventListener("click", () => answerPermission("once"));
+$("reject-permission").addEventListener("click", () => answerPermission("reject"));
+document.querySelectorAll('input[name="ai-mode"]').forEach((radio) => {
+  radio.addEventListener("change", () => { if (radio.checked) changeAiMode(radio.value); });
+});
 $("service-filter").addEventListener("input", renderServices);
 $("close-logs").addEventListener("click", () => $("log-dialog").close());
 $("copy-logs").addEventListener("click", async () => {

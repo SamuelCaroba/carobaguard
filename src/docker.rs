@@ -453,7 +453,7 @@ pub async fn action(
             command: Some(&format!("docker {operation} {id}")),
             result: audit_result,
             duration_ms: started.elapsed().as_millis() as i64,
-            exit_code: result.as_ref().map(|_| 0).err().map(|_| 1),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
             ai_session_id: None,
             ai_permission_mode: None,
             metadata: serde_json::json!({}),

@@ -26,3 +26,49 @@ workers. Docker, systemd and OpenCode are adapters, not independent services.
 See `docs/threat-model.md` for trust boundaries and `docs/opencode-integration.md`
 for the versioned integration contract.
 
+## Implemented control-plane components
+
+- Authenticated HTTP API with Argon2 password hashing, server-side sessions, CSRF
+  checks on mutations and backend RBAC.
+- Bounded Linux telemetry with SSE delivery and SQLite retention.
+- Docker and systemd adapters whose mutating operations are authorized and
+  audited by the backend.
+- Read-only Server Doctor and a bounded, redacting AI Context Engine.
+- On-demand OpenCode lifecycle, persistent session mappings, permission approval
+  relay, tool execution auditing and a static AI workspace in the web UI.
+
+## OpenCode security invariants
+
+- The child binds only to `127.0.0.1` and uses an ephemeral random Basic Auth
+  password that is never sent to the browser or stored in SQLite.
+- `Sleeping` means there is no managed child and reported OpenCode RAM is zero.
+  Startup does not become `Ready` until health and the internal SSE audit stream
+  are connected.
+- Process starts and stops are serialized. Slow child termination never holds the
+  process-state mutex, and a generation number prevents responses from an older
+  child from changing counters for its replacement.
+- Losing the internal OpenCode SSE stream or failing to persist a tool record is
+  fail-closed: CarobaGuard stops that child and enters `Error`, because continued
+  execution could not be fully audited.
+- Read Only explicitly denies the wildcard permission and every mutating or
+  delegating tool, while selectively allowing inspection tools. Approval asks for
+  mutating tools and relays the request over authenticated CarobaGuard SSE.
+  Unrestricted maps to OpenCode `allow`, but only after exact administrator
+  confirmation; it does not bypass authentication, RBAC or OS permissions.
+- Changing mode stops the current child. A persisted unrestricted session cannot
+  wake a new child after the global mode has returned to a safer setting.
+- Completed tool events are deduplicated by OpenCode `callID` and stored with the
+  CarobaGuard AI session, actor, result, permission mode and bounded metadata.
+  Credential-like commands are redacted; a SHA-256 fingerprint is retained for
+  correlation without storing the original secret-bearing command.
+
+## Known boundaries
+
+- The OpenCode adapter is version-sensitive at its HTTP and event schema boundary;
+  upgrades must be exercised with a real headless process before release.
+- Selecting an ephemeral loopback port and then starting OpenCode has an inherent
+  local bind race because OpenCode does not accept an already-bound listener.
+  Authentication prevents use of an unauthenticated substitute, and readiness
+  fails if the expected authenticated endpoints are unavailable.
+- Privilege is exactly that of the CarobaGuard OS account and configured groups or
+  helpers. Unrestricted mode cannot manufacture root privileges.

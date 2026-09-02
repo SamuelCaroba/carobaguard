@@ -1,7 +1,7 @@
 # OpenCode integration contract
 
-Researched against OpenCode 1.18.25 and the upstream documentation on
-2026-09-01. CarobaGuard starts `opencode serve --hostname 127.0.0.1 --port <free>`
+Researched against OpenCode 1.18.25 and exercised end-to-end against 1.18.26 on
+2026-09-02. CarobaGuard starts `opencode serve --hostname 127.0.0.1 --port <free>`
 with `OPENCODE_SERVER_PASSWORD` set to an ephemeral random secret.
 
 The adapter uses `/global/health`, `/session`, `/session/:id/message`, and `/event`.
@@ -13,6 +13,23 @@ CarobaGuard applies its own scope policy.
 OpenCode state may persist in its normal data directory, while CarobaGuard stores
 the stable mapping and permission mode in SQLite. Stopping the child therefore
 reclaims active memory without discarding session identity.
+
+The lifecycle is `Sleeping -> Starting -> Ready`, with `Error` reserved for
+startup failure, unexpected child exit or loss of the internal event stream.
+Health probes and stream connection are bounded by timeouts. Ordinary API calls
+have a 30-second limit; model message calls have a 15-minute limit so an Approval
+request can remain paused while the administrator decides. Responses are streamed
+into a bounded 4 MiB buffer.
+
+Permission flow:
+
+1. OpenCode emits `permission.asked` or `permission.v2.asked` on its loopback SSE.
+2. CarobaGuard forwards the event to authenticated operators without exposing the
+   OpenCode port or credentials.
+3. An operator replies through the CSRF-protected CarobaGuard API.
+4. CarobaGuard relays `once`, `always` or `reject` and records the decision.
+5. Completed tool parts are audited separately and deduplicated by `callID`,
+   including in Unrestricted mode.
 
 Primary references:
 

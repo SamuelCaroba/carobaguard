@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use carobaguard::{
-    AppState, api, config::Config, db, docker::DockerService, services::SystemdService,
-    telemetry::TelemetryService,
+    AppState, api, config::Config, db, docker::DockerService, opencode::OpenCodeManager,
+    services::SystemdService, telemetry::TelemetryService,
 };
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -23,12 +23,14 @@ async fn main() -> anyhow::Result<()> {
     db::bootstrap_admin(&db).await?;
 
     let telemetry = TelemetryService::start(db.clone()).await?;
+    let opencode = OpenCodeManager::new(db.clone());
     let state = AppState {
         config: config.clone(),
         db,
         telemetry,
         docker: DockerService::default(),
         systemd: SystemdService::default(),
+        opencode,
     };
 
     let app = api::router(state);
