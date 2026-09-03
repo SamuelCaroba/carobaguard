@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use tokio::{
     process::{Child, Command},
-    sync::{Mutex, broadcast},
+    sync::{Mutex, OwnedMutexGuard, broadcast},
 };
 use tracing::info;
 use uuid::Uuid;
@@ -38,6 +38,8 @@ use crate::{
 
 const UNRESTRICTED_CONFIRMATION: &str = "I understand OpenCode will have full control";
 const MAX_OPENCODE_RESPONSE: usize = 4 * 1024 * 1024;
+const MAX_CHAT_HISTORY_MESSAGES: usize = 200;
+const MAX_CHAT_MESSAGE_CHARS: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +71,7 @@ impl AiPermissionMode {
 pub struct OpenCodeManager {
     inner: Arc<Mutex<ProcessState>>,
     start_lock: Arc<Mutex<()>>,
+    prompt_lock: Arc<Mutex<()>>,
     http: Client,
     events: broadcast::Sender<serde_json::Value>,
     db: SqlitePool,
@@ -184,6 +187,16 @@ pub struct AiSession {
     last_active_at: i64,
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ChatHistoryMessage {
+    id: String,
+    role: String,
+    text: String,
+    finish: Option<String>,
+    pending: bool,
+    error: Option<String>,
+}
+
 impl OpenCodeManager {
     pub fn new(db_pool: SqlitePool) -> Self {
         let (events, _) = broadcast::channel(256);
@@ -202,6 +215,7 @@ impl OpenCodeManager {
                 error: None,
             })),
             start_lock: Arc::new(Mutex::new(())),
+            prompt_lock: Arc::new(Mutex::new(())),
             http: Client::builder()
                 .connect_timeout(Duration::from_secs(3))
                 .build()
@@ -217,6 +231,10 @@ impl OpenCodeManager {
 
     pub fn subscribe(&self) -> broadcast::Receiver<serde_json::Value> {
         self.events.subscribe()
+    }
+
+    fn try_acquire_prompt(&self) -> Option<OwnedMutexGuard<()>> {
+        self.prompt_lock.clone().try_lock_owned().ok()
     }
 
     pub async fn status(&self) -> AgentStatus {
@@ -275,6 +293,10 @@ impl OpenCodeManager {
                 drop(state);
                 return Ok(self.status().await);
             }
+            anyhow::ensure!(
+                state.active_requests == 0,
+                "OpenCode is busy; wait for the active request before changing project or permission mode"
+            );
         }
         let port = available_loopback_port()?;
         let connection = Connection {
@@ -399,7 +421,8 @@ impl OpenCodeManager {
                 state.generation,
             )
         };
-        let request_timeout = if path.ends_with("/message") {
+        let active_request = ActiveRequestGuard::new(self.inner.clone(), generation);
+        let request_timeout = if method == Method::POST && path.ends_with("/message") {
             Duration::from_secs(15 * 60)
         } else {
             Duration::from_secs(30)
@@ -439,11 +462,7 @@ impl OpenCodeManager {
         .await
         .map_err(|_| anyhow::anyhow!("OpenCode request timed out after {request_timeout:?}"))
         .and_then(|result| result);
-        let mut state = self.inner.lock().await;
-        if state.generation == generation {
-            state.active_requests = state.active_requests.saturating_sub(1);
-            state.last_active = Instant::now();
-        }
+        active_request.finish().await;
         result
     }
 
@@ -548,6 +567,48 @@ impl OpenCodeManager {
                 };
                 terminate_child(child).await;
             }
+        });
+    }
+}
+
+struct ActiveRequestGuard {
+    inner: Arc<Mutex<ProcessState>>,
+    generation: u64,
+    released: bool,
+}
+
+impl ActiveRequestGuard {
+    fn new(inner: Arc<Mutex<ProcessState>>, generation: u64) -> Self {
+        Self {
+            inner,
+            generation,
+            released: false,
+        }
+    }
+
+    async fn finish(mut self) {
+        Self::release(&self.inner, self.generation).await;
+        self.released = true;
+    }
+
+    async fn release(inner: &Arc<Mutex<ProcessState>>, generation: u64) {
+        let mut state = inner.lock().await;
+        if state.generation == generation {
+            state.active_requests = state.active_requests.saturating_sub(1);
+            state.last_active = Instant::now();
+        }
+    }
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        let inner = self.inner.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            ActiveRequestGuard::release(&inner, generation).await;
         });
     }
 }
@@ -1010,6 +1071,34 @@ pub async fn sessions(
     Ok(Json(sessions))
 }
 
+pub async fn messages(
+    State(state): State<AppState>,
+    user: AuthUser,
+    AxumPath(id): AxumPath<String>,
+) -> ApiResult<Json<Vec<ChatHistoryMessage>>> {
+    user.role.require(Role::Operator)?;
+    let session = ai_session(&state.db, &id).await?;
+    let status = state.opencode.status().await;
+    if !matches!(status.phase, AgentPhase::Ready) {
+        let project = PathBuf::from(session.project_path.as_deref().unwrap_or("."));
+        state
+            .opencode
+            .start(&project, AiPermissionMode::ReadOnly)
+            .await
+            .map_err(|error| ApiError::service_unavailable(error.to_string()))?;
+    }
+    let remote_id = session
+        .opencode_session_id
+        .as_deref()
+        .ok_or_else(|| ApiError::service_unavailable("AI session has no OpenCode mapping"))?;
+    let response = state
+        .opencode
+        .request_json(Method::GET, &format!("/session/{remote_id}/message"), None)
+        .await
+        .map_err(|error| ApiError::service_unavailable(error.to_string()))?;
+    Ok(Json(visible_chat_history(&response)))
+}
+
 pub async fn create_session(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1109,14 +1198,12 @@ pub async fn chat(
             "message must contain 1 to 32000 bytes",
         ));
     }
-    let session = sqlx::query_as::<_, AiSession>(
-        "SELECT id, opencode_session_id, project_path, title, status, permission_mode, \
-         created_by, created_at, updated_at, last_active_at FROM ai_sessions WHERE id = ?",
-    )
-    .bind(&id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::not_found("AI session not found"))?;
+    let session = ai_session(&state.db, &id).await?;
+    let _prompt_guard = state.opencode.try_acquire_prompt().ok_or_else(|| {
+        ApiError::service_unavailable(
+            "OpenCode is already answering another request; wait for it to finish",
+        )
+    })?;
     let mode = AiPermissionMode::parse(&session.permission_mode);
     if mode == AiPermissionMode::Unrestricted {
         user.role.require(Role::Admin)?;
@@ -1194,6 +1281,80 @@ pub async fn chat(
     .execute(&state.db)
     .await?;
     Ok(Json(response))
+}
+
+async fn ai_session(pool: &SqlitePool, id: &str) -> ApiResult<AiSession> {
+    if Uuid::parse_str(id).is_err() {
+        return Err(ApiError::bad_request("invalid AI session ID"));
+    }
+    sqlx::query_as::<_, AiSession>(
+        "SELECT id, opencode_session_id, project_path, title, status, permission_mode, \
+         created_by, created_at, updated_at, last_active_at FROM ai_sessions WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| ApiError::not_found("AI session not found"))
+}
+
+fn visible_chat_history(value: &serde_json::Value) -> Vec<ChatHistoryMessage> {
+    let Some(messages) = value.as_array() else {
+        return Vec::new();
+    };
+    messages
+        .iter()
+        .skip(messages.len().saturating_sub(MAX_CHAT_HISTORY_MESSAGES))
+        .filter_map(|message| {
+            let info = message.get("info")?;
+            let role = info.get("role")?.as_str()?;
+            if !matches!(role, "user" | "assistant") {
+                return None;
+            }
+            let text = message
+                .get("parts")?
+                .as_array()?
+                .iter()
+                .filter(|part| part.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let text = if role == "user" {
+                visible_user_request(&text)
+            } else {
+                text.trim()
+            };
+            if text.is_empty() {
+                return None;
+            }
+            let finish = info
+                .get("finish")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+            let error = info
+                .get("error")
+                .filter(|value| !value.is_null())
+                .map(|_| "OpenCode reported an error while producing this message".to_owned());
+            Some(ChatHistoryMessage {
+                id: info
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                role: role.to_owned(),
+                text: text.chars().take(MAX_CHAT_MESSAGE_CHARS).collect(),
+                finish,
+                pending: role == "assistant"
+                    && info.get("finish").is_none_or(|value| value.is_null()),
+                error,
+            })
+        })
+        .collect()
+}
+
+fn visible_user_request(text: &str) -> &str {
+    text.split_once("<user_request>\n")
+        .and_then(|(_, request)| request.split_once("\n</user_request>"))
+        .map_or_else(|| text.trim(), |(request, _)| request.trim())
 }
 
 pub async fn reply_permission(
@@ -1443,5 +1604,29 @@ mod tests {
             redact_audit_command("curl https://user:pass@example.test/health")
                 .starts_with("[REDACTED:")
         );
+    }
+
+    #[test]
+    fn chat_history_hides_supplied_context_and_empty_partial_messages() {
+        let value = serde_json::json!([
+            {
+                "info": {"id": "user-1", "role": "user", "finish": null},
+                "parts": [{"type": "text", "text": "<carobaguard_context>secret context</carobaguard_context>\n\n<user_request>\nDiagnostique o host\n</user_request>"}]
+            },
+            {
+                "info": {"id": "assistant-1", "role": "assistant", "finish": "stop"},
+                "parts": [{"type": "text", "text": "Sistema saudável."}]
+            },
+            {
+                "info": {"id": "assistant-2", "role": "assistant", "finish": null},
+                "parts": []
+            }
+        ]);
+        let history = visible_chat_history(&value);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].text, "Diagnostique o host");
+        assert_eq!(history[1].text, "Sistema saudável.");
+        assert!(!history[1].pending);
     }
 }

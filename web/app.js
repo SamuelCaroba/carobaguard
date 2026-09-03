@@ -8,8 +8,12 @@ const state = {
   currentProfile: "balanced",
   units: [],
   aiSession: null,
+  aiSessions: [],
   aiStream: null,
   aiMode: "read_only",
+  aiPhase: "sleeping",
+  aiResponding: false,
+  aiRequestPending: false,
   aiContext: { kind: "system", target: null, label: "System overview" },
   pendingPermissions: [],
   unrestrictedConfirmed: false,
@@ -104,7 +108,7 @@ document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.add("active");
     const page = button.dataset.page;
     $(`page-${page}`).classList.add("active");
-    $("page-title").textContent = button.textContent.trim().replace(/^\d+\s*/, "");
+    $("page-title").textContent = button.textContent.trim();
     loadPage(page);
   });
 });
@@ -789,9 +793,11 @@ function openLogDialog(title, source) {
 
 function openAiFor(kind, id, label, projectPath = null) {
   state.aiContext = { kind, target: id, label: `${kind} · ${label || id}` };
+  state.aiSession = null;
   $("ai-context").textContent = state.aiContext.label;
   if (projectPath) $("ai-project").value = projectPath;
   document.querySelector('[data-page="ai"]').click();
+  setAiSetup(true);
   toast(`Contexto preparado: ${kind} ${label || id}.`);
 }
 
@@ -803,30 +809,37 @@ async function loadAi() {
     ]);
     renderAiStatus(status);
     renderAiSessions(sessions);
+    if (state.aiSession) {
+      state.aiSession = sessions.find((session) => session.id === state.aiSession.id) || null;
+    }
+    updateAiConversation();
+    if (!state.aiSession && !sessions.length) setAiSetup(true);
     ensureAiEventStream();
   } catch (error) { toast(error.message, true); }
 }
 
 function renderAiStatus(status) {
   state.aiMode = status.permission_mode;
-  $("ai-status").textContent = titleCase(status.phase);
+  state.aiPhase = status.phase;
+  if (!state.aiResponding) $("ai-status").textContent = titleCase(status.phase);
   $("ai-memory").textContent = status.phase === "sleeping" ? "~0 B" : bytes(status.memory_bytes);
   $("ai-version").textContent = status.version || (status.installed ? "installed" : "not installed");
   $("ai-timeout").textContent = `${status.idle_timeout_seconds}s`;
-  $("start-ai").disabled = status.phase === "starting";
   $("stop-ai").disabled = status.phase === "sleeping";
   if (status.project_path) $("ai-project").value = status.project_path;
-  setSelectedAiMode(status.permission_mode);
-  $("unrestricted-warning").hidden = status.permission_mode !== "unrestricted";
-  $("chat-hint").textContent = `${modeLabel(status.permission_mode)} · context automático`;
+  if ($("ai-setup").hidden) setSelectedAiMode("read_only");
+  $("unrestricted-warning").hidden = status.permission_mode !== "unrestricted"
+    || ["sleeping", "error"].includes(status.phase);
+  updateAiConversation();
   if (status.error) toast(status.error, true);
 }
 
 function renderAiSessions(sessions) {
+  state.aiSessions = sessions;
   if (!sessions.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "No sessions yet.";
+    empty.textContent = "Nenhuma sessão ainda.";
     $("ai-sessions").replaceChildren(empty);
     return;
   }
@@ -839,16 +852,78 @@ function renderAiSessions(sessions) {
     const metadata = document.createElement("small");
     metadata.textContent = `${session.permission_mode} · ${new Date(session.last_active_at * 1000).toLocaleString()}`;
     button.append(title, metadata);
-    button.addEventListener("click", () => {
-      state.aiSession = session;
-      renderAiSessions(sessions);
-      setSelectedAiMode(session.permission_mode);
-      $("ai-project").value = session.project_path || "";
-      addChatMessage("agent", `Session selected: ${session.title}`);
-    });
+    button.addEventListener("click", () => { selectAiSession(session); });
     return button;
   });
   $("ai-sessions").replaceChildren(...buttons);
+}
+
+function setAiSetup(open) {
+  $("ai-setup").hidden = !open;
+  if (open) {
+    setAiSessionsDrawer(false);
+    setSelectedAiMode("read_only");
+    window.setTimeout(() => $("ai-project").focus(), 0);
+  }
+}
+
+function setAiSessionsDrawer(open) {
+  $("ai-session-drawer").hidden = !open;
+  $("ai-sessions-toggle").setAttribute("aria-expanded", String(open));
+  if (open) setAiSetup(false);
+}
+
+function updateAiConversation() {
+  const session = state.aiSession;
+  $("ai-session-title").textContent = session ? session.title : "Nenhuma sessão selecionada";
+  $("ai-session-meta").textContent = session
+    ? `${modeLabel(session.permission_mode)} · ${session.project_path || "diretório padrão"}`
+    : "Abra uma sessão ou inicie uma nova conversa.";
+  $("chat-hint").textContent = session
+    ? `${modeLabel(session.permission_mode)} · contexto automático`
+    : "Selecione uma sessão";
+  const disabled = !session || state.aiResponding;
+  $("chat-prompt").disabled = disabled;
+  $("chat-form").querySelector("button[type=submit]").disabled = disabled;
+  $("start-ai").disabled = state.aiResponding;
+  $("ai-sessions-toggle").disabled = state.aiResponding;
+}
+
+function clearChatMessages(message = null) {
+  $("chat-messages").replaceChildren();
+  if (message) addChatMessage("agent", message);
+}
+
+function renderChatHistory(messages) {
+  $("chat-messages").replaceChildren();
+  if (!messages.length) {
+    addChatMessage("agent", "Sessão pronta. Envie uma mensagem para iniciar.");
+    return;
+  }
+  messages.forEach((message) => {
+    addChatMessage(message.role === "user" ? "user" : "agent", message.text);
+    if (message.error) addChatMessage("agent", message.error);
+  });
+}
+
+async function selectAiSession(session) {
+  state.aiSession = session;
+  $("ai-project").value = session.project_path || "";
+  setSelectedAiMode(session.permission_mode);
+  renderAiSessions(state.aiSessions);
+  updateAiConversation();
+  setAiSessionsDrawer(false);
+  clearChatMessages();
+  setAiResponding(true, "Carregando histórico da sessão…");
+  try {
+    const history = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`);
+    renderChatHistory(history);
+    renderAiStatus(await request("/api/v1/opencode/status"));
+  } catch (error) {
+    clearChatMessages(`Não foi possível carregar a sessão: ${error.message}`);
+  } finally {
+    setAiResponding(false);
+  }
 }
 
 function selectedAiMode() {
@@ -868,47 +943,15 @@ async function confirmationFor(mode) {
   return phrase;
 }
 
-async function changeAiMode(mode) {
-  const previous = state.aiMode;
-  try {
-    const confirmation = await confirmationFor(mode);
-    await request("/api/v1/opencode/mode", {
-      method: "POST",
-      body: JSON.stringify({ permission_mode: mode, confirmation }),
-    });
-    state.aiMode = mode;
-    state.unrestrictedConfirmed = mode === "unrestricted";
-    state.aiSession = null;
-    clearPendingPermissions();
-    $("unrestricted-warning").hidden = mode !== "unrestricted";
-    $("chat-hint").textContent = `${modeLabel(mode)} · context automático`;
-    renderAiStatus(await request("/api/v1/opencode/status"));
-    toast(`AI permission mode: ${modeLabel(mode)}. Agent stopped to enforce the new policy.`);
-  } catch (error) {
-    setSelectedAiMode(previous);
-    toast(error.message, true);
-  }
-}
-
-async function startAi() {
-  const mode = selectedAiMode();
-  try {
-    const confirmation = await confirmationFor(mode);
-    $("ai-status").textContent = "Starting";
-    const project = $("ai-project").value.trim();
-    const status = await request("/api/v1/opencode/start", {
-      method: "POST",
-      body: JSON.stringify({ project_path: project || null, permission_mode: mode, confirmation }),
-    });
-    if (mode === "unrestricted") state.unrestrictedConfirmed = true;
-    renderAiStatus(status);
-    toast("OpenCode ready on loopback.");
-  } catch (error) { $("ai-status").textContent = "Error"; toast(error.message, true); }
+function startAi() {
+  setAiSetup(true);
 }
 
 async function stopAi() {
   try {
     await request("/api/v1/opencode/stop", { method: "POST", body: "{}" });
+    state.aiRequestPending = false;
+    setAiResponding(false);
     clearPendingPermissions();
     renderAiStatus(await request("/api/v1/opencode/status"));
     toast("OpenCode stopped; session state remains persisted.");
@@ -917,6 +960,9 @@ async function stopAi() {
 
 async function createAiSession() {
   const mode = selectedAiMode();
+  const button = $("new-ai-session");
+  button.disabled = true;
+  setAiResponding(true, "Iniciando OpenCode…");
   try {
     const confirmation = await confirmationFor(mode);
     const project = $("ai-project").value.trim();
@@ -931,23 +977,32 @@ async function createAiSession() {
     });
     if (mode === "unrestricted") state.unrestrictedConfirmed = true;
     state.aiSession = session;
-    addChatMessage("agent", `Session ready in ${session.project_path}. Permission mode: ${session.permission_mode}.`);
-    await loadAi();
+    state.aiMode = mode;
+    setAiSetup(false);
+    clearChatMessages(`Sessão pronta em ${session.project_path}. Modo: ${modeLabel(session.permission_mode)}.`);
+    const sessions = await request("/api/v1/opencode/sessions");
+    renderAiSessions(sessions);
+    updateAiConversation();
+    renderAiStatus(await request("/api/v1/opencode/status"));
     return session;
   } catch (error) { toast(error.message, true); throw error; }
+  finally {
+    button.disabled = false;
+    setAiResponding(false);
+  }
 }
 
 async function sendChat(event) {
   event.preventDefault();
   const input = $("chat-prompt");
   const message = input.value.trim();
-  if (!message) return;
-  const button = event.currentTarget.querySelector("button[type=submit]");
-  button.disabled = true;
+  if (!message || !state.aiSession || state.aiResponding) return;
   addChatMessage("user", message);
   input.value = "";
+  state.aiRequestPending = true;
+  setAiResponding(true, "OpenCode está analisando…");
   try {
-    const session = state.aiSession || await createAiSession();
+    const session = state.aiSession;
     const response = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`, {
       method: "POST",
       body: JSON.stringify({
@@ -959,8 +1014,24 @@ async function sendChat(event) {
       ? response.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n")
       : "";
     addChatMessage("agent", text || JSON.stringify(response, null, 2));
-  } catch (error) { addChatMessage("agent", `Error: ${error.message}`); }
-  finally { button.disabled = false; input.focus(); }
+  } catch (error) {
+    const message = error.message === "Failed to fetch"
+      ? "A conexão com o CarobaGuard foi interrompida. Reabra esta sessão para recuperar uma resposta concluída."
+      : error.message;
+    addChatMessage("agent", `Erro: ${message}`);
+  } finally {
+    state.aiRequestPending = false;
+    setAiResponding(false);
+    input.focus();
+  }
+}
+
+function setAiResponding(active, message = "OpenCode está respondendo…") {
+  state.aiResponding = active;
+  $("ai-thinking").hidden = !active;
+  $("ai-thinking-text").textContent = message;
+  $("ai-status").textContent = active ? "Respondendo" : titleCase(state.aiPhase);
+  updateAiConversation();
 }
 
 function addChatMessage(kind, text) {
@@ -994,7 +1065,25 @@ function ensureAiEventStream() {
   state.aiStream.addEventListener("session.status", (event) => {
     try {
       const value = JSON.parse(event.data);
-      $("ai-status").textContent = titleCase(value.properties.status.type || "ready");
+      const details = value.properties || {};
+      const remoteId = details.sessionID || details.sessionId;
+      if (state.aiSession && remoteId && remoteId !== state.aiSession.opencode_session_id) return;
+      const status = details.status?.type || "ready";
+      if (status === "busy") setAiResponding(true, "OpenCode está analisando…");
+      else if (!state.aiRequestPending) setAiResponding(false);
+      else $("ai-thinking-text").textContent = "OpenCode está finalizando a resposta…";
+    } catch (_) { /* ignore malformed events */ }
+  });
+  state.aiStream.addEventListener("message.part.updated", (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      const part = value.properties?.part;
+      if (!part || part.sessionID !== state.aiSession?.opencode_session_id) return;
+      if (part.type === "tool" && ["pending", "running"].includes(part.state?.status)) {
+        setAiResponding(true, `OpenCode está usando ${part.tool || "uma ferramenta"}…`);
+      } else if (part.type === "reasoning") {
+        setAiResponding(true, "OpenCode está raciocinando…");
+      }
     } catch (_) { /* ignore malformed events */ }
   });
 }
@@ -1063,12 +1152,12 @@ $("doctor-ai").addEventListener("click", () => openAiFor("doctor", "latest", "Se
 $("start-ai").addEventListener("click", startAi);
 $("stop-ai").addEventListener("click", stopAi);
 $("new-ai-session").addEventListener("click", () => { createAiSession().catch(() => {}); });
+$("cancel-ai-setup").addEventListener("click", () => setAiSetup(false));
+$("ai-sessions-toggle").addEventListener("click", () => setAiSessionsDrawer($("ai-session-drawer").hidden));
+$("close-ai-sessions").addEventListener("click", () => setAiSessionsDrawer(false));
 $("chat-form").addEventListener("submit", sendChat);
 $("approve-permission").addEventListener("click", () => answerPermission("once"));
 $("reject-permission").addEventListener("click", () => answerPermission("reject"));
-document.querySelectorAll('input[name="ai-mode"]').forEach((radio) => {
-  radio.addEventListener("change", () => { if (radio.checked) changeAiMode(radio.value); });
-});
 $("service-filter").addEventListener("input", renderServices);
 $("close-logs").addEventListener("click", () => $("log-dialog").close());
 $("copy-logs").addEventListener("click", async () => {

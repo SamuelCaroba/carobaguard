@@ -35,7 +35,9 @@ for the versioned integration contract.
   audited by the backend.
 - Read-only Server Doctor and a bounded, redacting AI Context Engine.
 - On-demand OpenCode lifecycle, persistent session mappings, permission approval
-  relay, tool execution auditing and a static AI workspace in the web UI.
+  relay, tool execution auditing and a static AI workspace in the web UI. Session
+  history is read back through the authenticated backend with injected context
+  removed before it reaches the browser.
 - On-demand host PTYs behind an authenticated WebSocket. The browser can only
   exchange terminal bytes and resize messages; it cannot select an executable or
   bypass the daemon's OS identity.
@@ -68,6 +70,8 @@ for the versioned integration contract.
 - The child binds only to `127.0.0.1` and uses an ephemeral random Basic Auth
   password that is never sent to the browser or stored in SQLite.
 - `Sleeping` means there is no managed child and reported OpenCode RAM is zero.
+- Only one prompt may execute at a time, and a project or permission-mode change
+  cannot replace the managed child while an OpenCode request is active.
   Startup does not become `Ready` until health and the internal SSE audit stream
   are connected.
 - Process starts and stops are serialized. Slow child termination never holds the

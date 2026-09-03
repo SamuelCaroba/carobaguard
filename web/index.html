@@ -36,15 +36,15 @@
           <div><strong>CarobaGuard</strong><small>CONTROL PLANE</small></div>
         </div>
         <nav id="nav" aria-label="Seções">
-          <button class="nav-item active" data-page="overview"><span>01</span> Visão geral</button>
-          <button class="nav-item" data-page="docker"><span>02</span> Containers</button>
-          <button class="nav-item" data-page="services"><span>03</span> Serviços</button>
-          <button class="nav-item" data-page="logs"><span>04</span> Logs</button>
-          <button class="nav-item" data-page="terminal"><span>05</span> Terminal</button>
-          <button class="nav-item" data-page="ai"><span>06</span> AI Agent</button>
-          <button class="nav-item" data-page="projects"><span>07</span> Projects</button>
-          <button class="nav-item" data-page="doctor"><span>08</span> Server Doctor</button>
-          <button class="nav-item" data-page="audit"><span>09</span> Audit Log</button>
+          <button class="nav-item active" data-page="overview">Visão geral</button>
+          <button class="nav-item" data-page="docker">Containers</button>
+          <button class="nav-item" data-page="services">Serviços</button>
+          <button class="nav-item" data-page="logs">Logs</button>
+          <button class="nav-item" data-page="terminal">Terminal</button>
+          <button class="nav-item" data-page="ai">AI Agent</button>
+          <button class="nav-item" data-page="projects">Projects</button>
+          <button class="nav-item" data-page="doctor">Server Doctor</button>
+          <button class="nav-item" data-page="audit">Audit Log</button>
         </nav>
         <div class="sidebar-footer">
           <div class="connection"><i></i><span>Daemon conectado</span></div>
@@ -189,31 +189,36 @@
           <div class="ai-status-bar">
             <div class="agent-identity"><span class="agent-orb"></span><div><p class="eyebrow">OPENCODE HEADLESS</p><h2>AI Agent</h2></div></div>
             <dl class="agent-stats"><div><dt>Status</dt><dd id="ai-status">Sleeping</dd></div><div><dt>RAM</dt><dd id="ai-memory">~0 B</dd></div><div><dt>Version</dt><dd id="ai-version">—</dd></div><div><dt>Idle timeout</dt><dd id="ai-timeout">—</dd></div></dl>
-            <div class="toolbar-actions"><button id="stop-ai" class="secondary">Stop</button><button id="start-ai" class="primary compact-button">Start</button></div>
+            <div class="toolbar-actions"><button id="ai-sessions-toggle" class="secondary" aria-expanded="false">Sessões</button><button id="stop-ai" class="secondary">Parar</button><button id="start-ai" class="primary compact-button">Nova conversa</button></div>
           </div>
           <div id="unrestricted-warning" class="danger-banner" hidden><strong>WARNING · UNRESTRICTED MODE</strong><span>OpenCode currently has full control allowed by the CarobaGuard OS account. Authentication, RBAC and Audit Log remain enforced.</span></div>
-          <div class="ai-layout">
-            <aside class="ai-settings panel">
-              <p class="eyebrow">AGENT CONFIGURATION</p>
+          <div class="ai-workspace">
+            <aside id="ai-session-drawer" class="ai-session-drawer" hidden>
+              <div class="ai-drawer-heading"><div><p class="eyebrow">HISTÓRICO</p><h3>Sessões</h3></div><button id="close-ai-sessions" class="icon-button" aria-label="Fechar sessões">×</button></div>
+              <div class="session-list" id="ai-sessions"><p class="empty">Nenhuma sessão.</p></div>
+            </aside>
+            <section id="ai-setup" class="ai-setup panel" hidden>
+              <div class="ai-drawer-heading"><div><p class="eyebrow">NOVA CONVERSA</p><h3>Configurar agente</h3></div><button id="cancel-ai-setup" class="icon-button" aria-label="Cancelar configuração">×</button></div>
               <label for="ai-project">Project</label><input id="ai-project" placeholder="Current daemon directory">
               <span class="field-label">Permission mode</span>
               <label class="radio-row"><input type="radio" name="ai-mode" value="read_only" checked><span><strong>Read Only</strong><small>Files and supplied context; mutations denied</small></span></label>
               <label class="radio-row"><input type="radio" name="ai-mode" value="approval"><span><strong>Require Approval</strong><small>Every mutating tool call pauses</small></span></label>
               <label class="radio-row danger-radio"><input type="radio" name="ai-mode" value="unrestricted"><span><strong>Unrestricted</strong><small>No per-action confirmation</small></span></label>
               <div class="context-box"><span>CONTEXT</span><strong id="ai-context">System overview</strong><small>Context is selected, redacted and capped server-side.</small></div>
-              <button id="new-ai-session" class="secondary full">New session</button>
-              <div class="session-list" id="ai-sessions"><p class="empty">No sessions yet.</p></div>
-            </aside>
+              <button id="new-ai-session" class="primary full">Iniciar conversa</button>
+            </section>
             <div class="chat-panel">
+              <div class="chat-session-bar"><div><p class="eyebrow">CONVERSA ATUAL</p><strong id="ai-session-title">Nenhuma sessão selecionada</strong></div><span id="ai-session-meta">Abra uma sessão ou inicie uma nova conversa.</span></div>
               <div id="approval-card" class="approval-card" hidden>
                 <div><p class="eyebrow">APPROVAL REQUIRED</p><strong id="approval-title">OpenCode wants to execute an action</strong><pre id="approval-details"></pre></div>
                 <div class="approval-actions"><button id="reject-permission" class="secondary">Reject</button><button id="approve-permission" class="primary compact-button">Approve once</button></div>
               </div>
-              <div id="chat-messages" class="chat-messages"><div class="agent-message"><span>OpenCode</span><p>Agent sleeping. Start it or create a session to investigate this server.</p></div></div>
+              <div id="chat-messages" class="chat-messages"><div class="agent-message"><span>OpenCode</span><p>Inicie uma nova conversa ou abra uma sessão existente.</p></div></div>
+              <div id="ai-thinking" class="ai-thinking" role="status" aria-live="polite" hidden><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><strong id="ai-thinking-text">OpenCode está respondendo…</strong></div>
               <form id="chat-form" class="chat-input">
                 <label for="chat-prompt" class="sr-only">Mensagem para OpenCode</label>
-                <textarea id="chat-prompt" rows="3" placeholder="Ask OpenCode about this server…"></textarea>
-                <div><span id="chat-hint">Read Only · context automático</span><button type="submit" class="primary compact-button">Send</button></div>
+                <textarea id="chat-prompt" rows="3" placeholder="Pergunte ao OpenCode sobre este servidor…" disabled></textarea>
+                <div><span id="chat-hint">Selecione uma sessão</span><button type="submit" class="primary compact-button" disabled>Enviar</button></div>
               </form>
             </div>
           </div>

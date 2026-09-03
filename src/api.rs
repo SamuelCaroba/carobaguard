@@ -63,7 +63,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/opencode/sessions/{id}/messages",
-            post(opencode::chat),
+            get(opencode::messages).post(opencode::chat),
         )
         .route("/api/v1/opencode/events", get(opencode::events))
         .route(
