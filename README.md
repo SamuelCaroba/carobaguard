@@ -35,6 +35,7 @@ or on a trusted VPN/LAN.
 | `CAROBAGUARD_TERMINAL_IDLE_TIMEOUT_SECONDS` | `900` | Close terminals without user input |
 | `CAROBAGUARD_TERMINAL_MAX_DURATION_SECONDS` | `14400` | Absolute terminal lifetime |
 | `CAROBAGUARD_LOG_MAX_STREAMS` | `8` | Maximum concurrent Docker/journal streams |
+| `CAROBAGUARD_PROJECT_ROOTS` | `$HOME` | Colon-separated roots allowed for local projects |
 
 ## Implemented foundation
 
@@ -65,6 +66,8 @@ or on a trusted VPN/LAN.
   audit records.
 - central SSE log viewer for Docker and systemd with bounded lines, backpressure,
   pause/resume, text and severity filters, export and disconnect cleanup.
+- registered local projects with canonical root restrictions, bounded read-only
+  Git inspection and project-specific OpenCode context.
 
 ## Development
 

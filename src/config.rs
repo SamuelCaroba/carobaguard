@@ -17,6 +17,7 @@ pub struct Config {
     pub terminal_idle_timeout_seconds: u64,
     pub terminal_max_duration_seconds: u64,
     pub log_max_streams: usize,
+    pub project_roots: Vec<PathBuf>,
 }
 
 impl Config {
@@ -62,6 +63,7 @@ impl Config {
         if !(1..=64).contains(&log_max_streams) {
             bail!("CAROBAGUARD_LOG_MAX_STREAMS must be between 1 and 64");
         }
+        let project_roots = project_roots()?;
 
         Ok(Self {
             bind: SocketAddr::new(host, port),
@@ -73,11 +75,13 @@ impl Config {
             terminal_idle_timeout_seconds,
             terminal_max_duration_seconds,
             log_max_streams,
+            project_roots,
         })
     }
 
     #[cfg(test)]
     pub fn test(data_dir: PathBuf) -> Self {
+        let project_root = data_dir.parent().unwrap_or(&data_dir).to_path_buf();
         Self {
             bind: SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
             database_url: format!("sqlite://{}", data_dir.join("test.db").display()),
@@ -88,6 +92,7 @@ impl Config {
             terminal_idle_timeout_seconds: 900,
             terminal_max_duration_seconds: 14_400,
             log_max_streams: 8,
+            project_roots: vec![project_root],
         }
     }
 }
@@ -125,4 +130,28 @@ where
                 .with_context(|| format!("{name} must be an integer"))
         },
     )
+}
+
+fn project_roots() -> anyhow::Result<Vec<PathBuf>> {
+    let values = match env::var_os("CAROBAGUARD_PROJECT_ROOTS") {
+        Some(value) => env::split_paths(&value).collect::<Vec<_>>(),
+        None => vec![PathBuf::from(
+            env::var_os("HOME").context("CAROBAGUARD_PROJECT_ROOTS or HOME is required")?,
+        )],
+    };
+    if values.is_empty() {
+        bail!("CAROBAGUARD_PROJECT_ROOTS must contain at least one path");
+    }
+    values
+        .into_iter()
+        .map(|path| {
+            let canonical = path
+                .canonicalize()
+                .with_context(|| format!("project root {} is unavailable", path.display()))?;
+            if !canonical.is_dir() {
+                bail!("project root {} is not a directory", canonical.display());
+            }
+            Ok(canonical)
+        })
+        .collect()
 }

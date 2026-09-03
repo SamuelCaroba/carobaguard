@@ -42,8 +42,9 @@
           <button class="nav-item" data-page="logs"><span>04</span> Logs</button>
           <button class="nav-item" data-page="terminal"><span>05</span> Terminal</button>
           <button class="nav-item" data-page="ai"><span>06</span> AI Agent</button>
-          <button class="nav-item" data-page="doctor"><span>07</span> Server Doctor</button>
-          <button class="nav-item" data-page="audit"><span>08</span> Audit Log</button>
+          <button class="nav-item" data-page="projects"><span>07</span> Projects</button>
+          <button class="nav-item" data-page="doctor"><span>08</span> Server Doctor</button>
+          <button class="nav-item" data-page="audit"><span>09</span> Audit Log</button>
         </nav>
         <div class="sidebar-footer">
           <div class="connection"><i></i><span>Daemon conectado</span></div>
@@ -215,6 +216,22 @@
                 <div><span id="chat-hint">Read Only · context automático</span><button type="submit" class="primary compact-button">Send</button></div>
               </form>
             </div>
+          </div>
+        </section>
+        <section class="page" id="page-projects">
+          <div class="section-toolbar">
+            <div><p class="eyebrow">LOCAL WORKSPACES</p><h2>Projects</h2><p id="projects-status" class="section-status">Diretórios permitidos pelo backend e estado Git sem hooks.</p></div>
+            <form id="project-form" class="project-form">
+              <label class="sr-only" for="project-name">Nome do projeto</label><input id="project-name" placeholder="Nome" maxlength="128" required>
+              <label class="sr-only" for="project-path">Diretório do projeto</label><input id="project-path" placeholder="/srv/projects/example" required>
+              <button type="submit" class="primary compact-button">Cadastrar</button>
+            </form>
+          </div>
+          <div class="table-shell">
+            <table>
+              <thead><tr><th>Projeto</th><th>Branch</th><th>Estado</th><th>Linguagem</th><th>Diretório</th><th class="align-right">Ações</th></tr></thead>
+              <tbody id="project-rows"><tr><td colspan="6" class="table-empty">Nenhum projeto cadastrado.</td></tr></tbody>
+            </table>
           </div>
         </section>
         <section class="page" id="page-doctor">

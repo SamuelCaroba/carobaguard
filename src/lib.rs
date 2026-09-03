@@ -9,6 +9,7 @@ pub mod doctor;
 pub mod error;
 pub mod logs;
 pub mod opencode;
+pub mod projects;
 pub mod services;
 pub mod telemetry;
 pub mod terminal;

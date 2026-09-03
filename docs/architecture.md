@@ -42,6 +42,9 @@ for the versioned integration contract.
 - Bounded SSE log streams for Docker and systemd. Docker's multiplexed frames are
   decoded incrementally; journal followers use fixed argument vectors and are
   killed when their authenticated client disconnects.
+- Local project registrations store canonical paths only inside configured roots.
+  Git inspection disables optional locks, hooks, fsmonitor and pagers, and applies
+  strict time/output limits. Removing a registration never removes project files.
 
 ## Terminal security invariants
 

@@ -35,3 +35,6 @@ paths receive allowlist or canonicalization checks before privileged use.
   selects the shell, caps message and resize inputs, times out slow clients, and
   kills/reaps the child on disconnect. Terminal contents are excluded from audit
   storage to avoid creating a second secret database.
+- Malicious repositories: project paths are canonicalized beneath configured
+  roots. Read-only Git commands use fixed arguments with hooks, fsmonitor, pagers
+  and optional locks disabled, plus bounded output and execution time.

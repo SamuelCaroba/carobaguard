@@ -119,6 +119,7 @@ function loadPage(page) {
   if (page === "audit") loadAudit();
   if (page === "doctor") loadDoctor();
   if (page === "ai") loadAi();
+  if (page === "projects") loadProjects();
 }
 
 window.addEventListener("carobaguard:toast", (event) => {
@@ -611,6 +612,80 @@ function exportStreamLogs() {
   window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
 }
 
+async function loadProjects() {
+  setTableMessage("project-rows", 6, "Inspecionando projetos…");
+  try {
+    const projects = await request("/api/v1/projects");
+    $("projects-status").textContent = projects.length
+      ? `${projects.length} projeto${projects.length === 1 ? "" : "s"} cadastrado${projects.length === 1 ? "" : "s"}.`
+      : "Cadastre um diretório existente dentro das raízes permitidas.";
+    renderProjects(projects);
+  } catch (error) {
+    $("projects-status").textContent = error.message;
+    setTableMessage("project-rows", 6, "Falha ao consultar projetos.");
+  }
+}
+
+function renderProjects(projects) {
+  if (!projects.length) {
+    setTableMessage("project-rows", 6, "Nenhum projeto cadastrado.");
+    return;
+  }
+  const rows = projects.map((project) => {
+    const row = document.createElement("tr");
+    const actions = document.createElement("td");
+    actions.className = "align-right";
+    const buttons = document.createElement("div");
+    buttons.className = "row-actions";
+    buttons.append(
+      actionButton("Open with OpenCode", () => openAiFor("project", project.id, project.name, project.path), "ai"),
+      actionButton("Remover", () => removeProject(project), "danger"),
+    );
+    actions.append(buttons);
+    const gitState = project.clean === true
+      ? "Clean"
+      : project.clean === false
+        ? `${project.modified_files} modified`
+        : "No Git";
+    row.append(
+      tableCell(project.name, "primary-cell"),
+      tableCell(project.branch || "—"),
+      tableCell(gitState),
+      tableCell(project.language || "—"),
+      tableCell(project.path, "secondary-cell"),
+      actions,
+    );
+    return row;
+  });
+  $("project-rows").replaceChildren(...rows);
+}
+
+async function registerProject(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    await request("/api/v1/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: $("project-name").value, path: $("project-path").value }),
+    });
+    $("project-name").value = "";
+    $("project-path").value = "";
+    toast("Projeto cadastrado; nenhum arquivo foi modificado.");
+    await loadProjects();
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+}
+
+async function removeProject(project) {
+  if (!window.confirm(`Remover apenas o cadastro de ${project.name}? Os arquivos não serão apagados.`)) return;
+  try {
+    await request(`/api/v1/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+    toast("Cadastro removido; arquivos preservados.");
+    await loadProjects();
+  } catch (error) { toast(error.message, true); }
+}
+
 async function loadAudit() {
   setTableMessage("audit-rows", 7, "Carregando trilha de auditoria…");
   try {
@@ -712,9 +787,10 @@ function openLogDialog(title, source) {
   $("log-dialog").showModal();
 }
 
-function openAiFor(kind, id, label) {
+function openAiFor(kind, id, label, projectPath = null) {
   state.aiContext = { kind, target: id, label: `${kind} · ${label || id}` };
   $("ai-context").textContent = state.aiContext.label;
+  if (projectPath) $("ai-project").value = projectPath;
   document.querySelector('[data-page="ai"]').click();
   toast(`Contexto preparado: ${kind} ${label || id}.`);
 }
@@ -981,6 +1057,7 @@ $("stream-log-target").addEventListener("change", () => {
 $("stream-log-filter").addEventListener("input", renderStreamLogs);
 $("stream-log-level").addEventListener("change", renderStreamLogs);
 $("refresh-audit").addEventListener("click", loadAudit);
+$("project-form").addEventListener("submit", registerProject);
 $("run-doctor").addEventListener("click", loadDoctor);
 $("doctor-ai").addEventListener("click", () => openAiFor("doctor", "latest", "Server Doctor"));
 $("start-ai").addEventListener("click", startAi);

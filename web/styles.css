@@ -161,6 +161,8 @@ main { grid-column: 2; min-width: 0; }
 .secondary { padding: 8px 12px; font-size: 10px; }
 .secondary:hover, .action-button:hover, .icon-button:hover { border-color: #40515e; color: var(--text); }
 .compact-input { width: 230px; padding: 8px 10px; font-size: 10px; }
+.project-form { display: grid; grid-template-columns: 150px minmax(260px, 1fr) auto; gap: 7px; width: min(610px, 100%); }
+.project-form input { min-width: 0; padding: 8px 10px; font-size: 10px; }
 .table-shell { border: 1px solid var(--line); background: var(--surface); overflow: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 10px; }
 th { padding: 10px 12px; border-bottom: 1px solid var(--line); background: #0d1318; color: var(--muted); font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
@@ -285,6 +287,7 @@ dialog::backdrop { background: rgba(2,5,7,.78); backdrop-filter: blur(3px); }
   .section-toolbar { align-items: stretch; flex-direction: column; }
   .toolbar-actions { width: 100%; }
   .compact-input { min-width: 0; width: 100%; }
+  .project-form { grid-template-columns: 1fr; width: 100%; }
   .terminal-heading { align-items: stretch; flex-direction: column; }
   .terminal-controls { width: 100%; flex-wrap: wrap; }
   .terminal-status { flex: 1; }

@@ -12,6 +12,7 @@ pub enum ContextKind {
     Container,
     Service,
     Doctor,
+    Project,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -118,6 +119,16 @@ pub async fn build_context(state: &AppState, request: Option<&ContextRequest>) -
                 }))
                 .unwrap_or_default(),
             ));
+        }
+        ContextKind::Project => {
+            let Some(target) = request.target.as_deref() else {
+                sections.push(section("context_error", "project target was not provided"));
+                return assemble(sections);
+            };
+            match crate::projects::context(&state.db, target).await {
+                Ok(value) => sections.push(section("registered_project", value)),
+                Err(error) => sections.push(section("project_context_error", error.to_string())),
+            }
         }
     }
     assemble(sections)

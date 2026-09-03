@@ -18,7 +18,7 @@ use crate::{
     auth::{self, AuthUser, Role},
     docker, doctor,
     error::{ApiError, ApiResult},
-    logs, opencode, services,
+    logs, opencode, projects, services,
     telemetry::{SystemSnapshot, TelemetryProfile},
     terminal,
 };
@@ -76,6 +76,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/terminal/ws", get(terminal::websocket))
         .route("/api/v1/logs/events", get(logs::events))
+        .route(
+            "/api/v1/projects",
+            get(projects::list).post(projects::register),
+        )
+        .route(
+            "/api/v1/projects/{id}",
+            axum::routing::delete(projects::remove),
+        )
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
