@@ -16,6 +16,8 @@ const state = {
   aiRequestPending: false,
   aiContext: { kind: "system", target: null, label: "System overview" },
   pendingPermissions: [],
+  pendingQuestions: [],
+  questionRefreshPending: false,
   unrestrictedConfirmed: false,
   logStream: null,
   logLines: [],
@@ -803,16 +805,22 @@ function openAiFor(kind, id, label, projectPath = null) {
 
 async function loadAi() {
   try {
-    const [status, sessions] = await Promise.all([
+    const [status, sessions, questions] = await Promise.all([
       request("/api/v1/opencode/status"),
       request("/api/v1/opencode/sessions"),
+      request("/api/v1/opencode/questions"),
     ]);
     renderAiStatus(status);
-    renderAiSessions(sessions);
     if (state.aiSession) {
       state.aiSession = sessions.find((session) => session.id === state.aiSession.id) || null;
     }
+    state.pendingQuestions = questions;
+    if (!state.aiSession && questions.length) {
+      state.aiSession = sessions.find((session) => session.opencode_session_id === questions[0].sessionID) || null;
+    }
+    renderAiSessions(sessions);
     updateAiConversation();
+    renderPendingQuestion();
     if (!state.aiSession && !sessions.length) setAiSetup(true);
     ensureAiEventStream();
   } catch (error) { toast(error.message, true); }
@@ -914,6 +922,7 @@ async function selectAiSession(session) {
   updateAiConversation();
   setAiSessionsDrawer(false);
   clearChatMessages();
+  renderPendingQuestion();
   setAiResponding(true, "Carregando histórico da sessão…");
   try {
     const history = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`);
@@ -1027,6 +1036,10 @@ async function sendChat(event) {
 }
 
 function setAiResponding(active, message = "OpenCode está respondendo…") {
+  if (!active && activePendingQuestion()) {
+    active = true;
+    message = "OpenCode aguarda sua resposta…";
+  }
   state.aiResponding = active;
   $("ai-thinking").hidden = !active;
   $("ai-thinking-text").textContent = message;
@@ -1062,6 +1075,36 @@ function ensureAiEventStream() {
   };
   state.aiStream.addEventListener("permission.asked", permissionHandler);
   state.aiStream.addEventListener("permission.v2.asked", permissionHandler);
+  const questionHandler = (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      const details = value.properties || value.data || {};
+      if (details.id && !state.pendingQuestions.some((question) => question.id === details.id)) {
+        state.pendingQuestions.push(details);
+      }
+      if (!state.aiSession) {
+        state.aiSession = state.aiSessions.find((session) => session.opencode_session_id === details.sessionID) || null;
+        renderAiSessions(state.aiSessions);
+        updateAiConversation();
+      }
+      renderPendingQuestion();
+    } catch (_) { /* ignore malformed events */ }
+  };
+  const questionResolvedHandler = (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      const details = value.properties || value.data || {};
+      const id = details.id || details.requestID;
+      state.pendingQuestions = state.pendingQuestions.filter((question) => question.id !== id);
+      renderPendingQuestion();
+    } catch (_) { /* ignore malformed events */ }
+  };
+  state.aiStream.addEventListener("question.asked", questionHandler);
+  state.aiStream.addEventListener("question.v2.asked", questionHandler);
+  state.aiStream.addEventListener("question.replied", questionResolvedHandler);
+  state.aiStream.addEventListener("question.v2.replied", questionResolvedHandler);
+  state.aiStream.addEventListener("question.rejected", questionResolvedHandler);
+  state.aiStream.addEventListener("question.v2.rejected", questionResolvedHandler);
   state.aiStream.addEventListener("session.status", (event) => {
     try {
       const value = JSON.parse(event.data);
@@ -1081,11 +1124,110 @@ function ensureAiEventStream() {
       if (!part || part.sessionID !== state.aiSession?.opencode_session_id) return;
       if (part.type === "tool" && ["pending", "running"].includes(part.state?.status)) {
         setAiResponding(true, `OpenCode está usando ${part.tool || "uma ferramenta"}…`);
+        if (part.tool === "question") refreshPendingQuestions();
       } else if (part.type === "reasoning") {
         setAiResponding(true, "OpenCode está raciocinando…");
       }
     } catch (_) { /* ignore malformed events */ }
   });
+}
+
+function activePendingQuestion() {
+  if (!state.aiSession) return null;
+  return state.pendingQuestions.find((question) => question.sessionID === state.aiSession.opencode_session_id) || null;
+}
+
+async function refreshPendingQuestions() {
+  if (state.questionRefreshPending) return;
+  state.questionRefreshPending = true;
+  try {
+    state.pendingQuestions = await request("/api/v1/opencode/questions");
+    renderPendingQuestion();
+  } catch (_) { /* status polling will retry when the AI page opens again */ }
+  finally { state.questionRefreshPending = false; }
+}
+
+function renderPendingQuestion() {
+  const pending = activePendingQuestion();
+  $("question-card").hidden = !pending;
+  if (!pending) {
+    $("question-fields").replaceChildren();
+    if (state.aiResponding && !state.aiRequestPending) setAiResponding(false);
+    return;
+  }
+  $("question-count").textContent = `${pending.questions.length} pergunta${pending.questions.length === 1 ? "" : "s"}`;
+  const fields = pending.questions.map((question, index) => {
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "question-field";
+    fieldset.dataset.questionIndex = String(index);
+    const legend = document.createElement("legend");
+    legend.textContent = question.header || `Pergunta ${index + 1}`;
+    const prompt = document.createElement("p");
+    prompt.textContent = question.question;
+    fieldset.append(legend, prompt);
+    question.options.forEach((option) => {
+      const label = document.createElement("label");
+      label.className = "question-option";
+      const input = document.createElement("input");
+      input.type = question.multiple ? "checkbox" : "radio";
+      input.name = `question-${index}`;
+      input.value = option.label;
+      const copy = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = option.label;
+      const description = document.createElement("small");
+      description.textContent = option.description;
+      copy.append(title, description);
+      label.append(input, copy);
+      fieldset.append(label);
+    });
+    if (question.custom) {
+      const custom = document.createElement("input");
+      custom.className = "question-custom";
+      custom.dataset.customAnswer = "true";
+      custom.maxLength = 4096;
+      custom.placeholder = "Outra resposta (opcional)";
+      fieldset.append(custom);
+    }
+    return fieldset;
+  });
+  $("question-fields").replaceChildren(...fields);
+  setAiResponding(true, "OpenCode aguarda sua resposta…");
+}
+
+function collectQuestionAnswers() {
+  return Array.from($("question-fields").querySelectorAll(".question-field")).map((field) => {
+    const selected = Array.from(field.querySelectorAll('input[type="radio"]:checked, input[type="checkbox"]:checked'))
+      .map((input) => input.value);
+    const custom = field.querySelector("[data-custom-answer]")?.value.trim() || "";
+    if (custom) {
+      if (field.querySelector('input[type="checkbox"]')) selected.push(custom);
+      else return [custom];
+    }
+    if (!selected.length) throw new Error("Responda todas as perguntas antes de continuar.");
+    return selected;
+  });
+}
+
+async function answerQuestion(reject) {
+  const pending = activePendingQuestion();
+  if (!pending) return;
+  let answers = [];
+  try {
+    if (!reject) answers = collectQuestionAnswers();
+    $("question-card").querySelectorAll("button, input").forEach((element) => { element.disabled = true; });
+    await request(`/api/v1/opencode/questions/${encodeURIComponent(pending.id)}`, {
+      method: "POST",
+      body: JSON.stringify({ answers, reject }),
+    });
+    state.pendingQuestions = state.pendingQuestions.filter((question) => question.id !== pending.id);
+    renderPendingQuestion();
+    setAiResponding(true, reject ? "Pergunta cancelada; aguardando OpenCode…" : "Resposta enviada; OpenCode retomou o trabalho…");
+    toast(reject ? "Pergunta do OpenCode cancelada." : "Resposta enviada ao OpenCode.");
+  } catch (error) {
+    toast(error.message, true);
+    renderPendingQuestion();
+  }
 }
 
 function renderPendingPermission() {
@@ -1156,6 +1298,11 @@ $("cancel-ai-setup").addEventListener("click", () => setAiSetup(false));
 $("ai-sessions-toggle").addEventListener("click", () => setAiSessionsDrawer($("ai-session-drawer").hidden));
 $("close-ai-sessions").addEventListener("click", () => setAiSessionsDrawer(false));
 $("chat-form").addEventListener("submit", sendChat);
+$("question-card").addEventListener("submit", (event) => {
+  event.preventDefault();
+  answerQuestion(false);
+});
+$("reject-question").addEventListener("click", () => answerQuestion(true));
 $("approve-permission").addEventListener("click", () => answerPermission("once"));
 $("reject-permission").addEventListener("click", () => answerPermission("reject"));
 $("service-filter").addEventListener("input", renderServices);

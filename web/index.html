@@ -213,6 +213,11 @@
                 <div><p class="eyebrow">APPROVAL REQUIRED</p><strong id="approval-title">OpenCode wants to execute an action</strong><pre id="approval-details"></pre></div>
                 <div class="approval-actions"><button id="reject-permission" class="secondary">Reject</button><button id="approve-permission" class="primary compact-button">Approve once</button></div>
               </div>
+              <form id="question-card" class="question-card" hidden>
+                <div class="question-heading"><div><p class="eyebrow">OPENCODE PRECISA DE VOCÊ</p><strong>Responda para continuar</strong></div><span id="question-count"></span></div>
+                <div id="question-fields" class="question-fields"></div>
+                <div class="question-actions"><button id="reject-question" type="button" class="secondary">Cancelar pedido</button><button type="submit" class="primary compact-button">Responder</button></div>
+              </form>
               <div id="chat-messages" class="chat-messages"><div class="agent-message"><span>OpenCode</span><p>Inicie uma nova conversa ou abra uma sessão existente.</p></div></div>
               <div id="ai-thinking" class="ai-thinking" role="status" aria-live="polite" hidden><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span><strong id="ai-thinking-text">OpenCode está respondendo…</strong></div>
               <form id="chat-form" class="chat-input">

@@ -70,6 +70,11 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/opencode/permissions/{request_id}",
             post(opencode::reply_permission),
         )
+        .route("/api/v1/opencode/questions", get(opencode::questions))
+        .route(
+            "/api/v1/opencode/questions/{request_id}",
+            post(opencode::reply_question),
+        )
         .route(
             "/api/v1/opencode/scopes",
             get(opencode::scope_permissions).post(opencode::set_scope_permission),

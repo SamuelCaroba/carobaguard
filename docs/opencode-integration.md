@@ -4,7 +4,8 @@ Researched against OpenCode 1.18.25 and exercised end-to-end against 1.18.26 on
 2026-09-02. CarobaGuard starts `opencode serve --hostname 127.0.0.1 --port <free>`
 with `OPENCODE_SERVER_PASSWORD` set to an ephemeral random secret.
 
-The adapter uses `/global/health`, `/session`, `/session/:id/message`, and `/event`.
+The adapter uses `/global/health`, `/session`, `/session/:id/message`, `/event`,
+and the `/question` request/reply endpoints.
 The API publishes an OpenAPI 3.1 document at `/doc`; compatibility is checked by
 health/version before use. Context can be injected as a no-reply text part before
 the user's prompt. Permission requests arrive on SSE and are answered only after
@@ -30,6 +31,15 @@ Permission flow:
 4. CarobaGuard relays `once`, `always` or `reject` and records the decision.
 5. Completed tool parts are audited separately and deduplicated by `callID`,
    including in Unrestricted mode.
+
+Interactive question flow:
+
+1. OpenCode emits `question.asked` (or its v2 counterpart) and pauses the tool.
+2. CarobaGuard displays the bounded question payload only for mapped AI sessions.
+3. An authenticated operator replies or rejects through the CSRF-protected API;
+   Unrestricted sessions additionally require an administrator.
+4. CarobaGuard relays the decision to loopback OpenCode and audits it without
+   storing the answer text.
 
 Primary references:
 

@@ -155,6 +155,39 @@ pub struct PermissionReplyRequest {
     message: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct QuestionOption {
+    label: String,
+    description: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct QuestionInfo {
+    question: String,
+    header: String,
+    options: Vec<QuestionOption>,
+    #[serde(default)]
+    multiple: bool,
+    #[serde(default)]
+    custom: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PendingQuestion {
+    id: String,
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    questions: Vec<QuestionInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QuestionReplyRequest {
+    #[serde(default)]
+    answers: Vec<Vec<String>>,
+    #[serde(default)]
+    reject: bool,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionReply {
@@ -1406,6 +1439,208 @@ pub async fn reply_permission(
     Ok(Json(response))
 }
 
+pub async fn questions(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> ApiResult<Json<Vec<PendingQuestion>>> {
+    user.role.require(Role::Operator)?;
+    if !matches!(state.opencode.status().await.phase, AgentPhase::Ready) {
+        return Ok(Json(Vec::new()));
+    }
+    let value = state
+        .opencode
+        .request_json(Method::GET, "/question", None)
+        .await
+        .map_err(|error| ApiError::service_unavailable(error.to_string()))?;
+    let mut questions = parse_pending_questions(value).map_err(ApiError::internal)?;
+    let mapped_sessions: HashSet<String> = sqlx::query_scalar(
+        "SELECT opencode_session_id FROM ai_sessions WHERE opencode_session_id IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+    questions.retain(|question| mapped_sessions.contains(&question.session_id));
+    Ok(Json(questions))
+}
+
+pub async fn reply_question(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: HeaderMap,
+    AxumPath(request_id): AxumPath<String>,
+    Json(request): Json<QuestionReplyRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    user.role.require(Role::Operator)?;
+    auth::verify_csrf(&user, &headers)?;
+    validate_remote_id(&request_id, "que", "question")?;
+    let pending = state
+        .opencode
+        .request_json(Method::GET, "/question", None)
+        .await
+        .map_err(|error| ApiError::service_unavailable(error.to_string()))?;
+    let question = parse_pending_questions(pending)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|question| question.id == request_id)
+        .ok_or_else(|| ApiError::not_found("OpenCode question is no longer pending"))?;
+    let (local_session_id, permission_mode): (String, String) =
+        sqlx::query_as("SELECT id, permission_mode FROM ai_sessions WHERE opencode_session_id = ?")
+            .bind(&question.session_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| {
+                ApiError::forbidden("question does not belong to a CarobaGuard AI session")
+            })?;
+    let mode = AiPermissionMode::parse(&permission_mode);
+    if mode == AiPermissionMode::Unrestricted {
+        user.role.require(Role::Admin)?;
+    }
+    validate_question_reply(&question, &request)?;
+    let started = Instant::now();
+    let action = if request.reject { "reject" } else { "reply" };
+    let response = if request.reject {
+        state
+            .opencode
+            .request_json(
+                Method::POST,
+                &format!("/question/{request_id}/reject"),
+                None,
+            )
+            .await
+    } else {
+        state
+            .opencode
+            .request_json(
+                Method::POST,
+                &format!("/question/{request_id}/reply"),
+                Some(serde_json::json!({"answers": &request.answers})),
+            )
+            .await
+    };
+    let audit_action = format!("opencode.question.{action}");
+    audit::record(
+        &state.db,
+        NewAuditEvent {
+            actor_user_id: Some(&user.id),
+            actor_name: &user.username,
+            origin: "opencode",
+            action: &audit_action,
+            target: &local_session_id,
+            command: None,
+            result: if response.is_ok() {
+                "success"
+            } else {
+                "failure"
+            },
+            duration_ms: started.elapsed().as_millis() as i64,
+            exit_code: Some(if response.is_ok() { 0 } else { 1 }),
+            ai_session_id: Some(&local_session_id),
+            ai_permission_mode: Some(mode.as_str()),
+            metadata: serde_json::json!({
+                "request_id": request_id,
+                "question_count": question.questions.len(),
+                "answer_counts": request.answers.iter().map(Vec::len).collect::<Vec<_>>()
+            }),
+        },
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let response = response.map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(Json(response))
+}
+
+fn parse_pending_questions(value: serde_json::Value) -> anyhow::Result<Vec<PendingQuestion>> {
+    let questions: Vec<PendingQuestion> = serde_json::from_value(value)?;
+    anyhow::ensure!(questions.len() <= 32, "too many pending OpenCode questions");
+    for request in &questions {
+        anyhow::ensure!(
+            valid_remote_id(&request.id, "que") && valid_remote_id(&request.session_id, "ses"),
+            "OpenCode returned an invalid question identifier"
+        );
+        anyhow::ensure!(
+            (1..=10).contains(&request.questions.len()),
+            "OpenCode question count is outside the supported range"
+        );
+        for question in &request.questions {
+            anyhow::ensure!(
+                !question.question.is_empty()
+                    && question.question.len() <= 4_096
+                    && question.header.len() <= 256
+                    && question.options.len() <= 20
+                    && (question.custom || !question.options.is_empty()),
+                "OpenCode returned an oversized question"
+            );
+            for option in &question.options {
+                anyhow::ensure!(
+                    !option.label.is_empty()
+                        && option.label.len() <= 1_024
+                        && option.description.len() <= 4_096,
+                    "OpenCode returned an oversized question option"
+                );
+            }
+        }
+    }
+    Ok(questions)
+}
+
+fn validate_question_reply(
+    question: &PendingQuestion,
+    request: &QuestionReplyRequest,
+) -> ApiResult<()> {
+    if request.reject {
+        if !request.answers.is_empty() {
+            return Err(ApiError::bad_request(
+                "rejected questions cannot include answers",
+            ));
+        }
+        return Ok(());
+    }
+    if request.answers.len() != question.questions.len() {
+        return Err(ApiError::bad_request(
+            "one answer is required for every OpenCode question",
+        ));
+    }
+    let mut total_bytes = 0_usize;
+    for (answer, info) in request.answers.iter().zip(&question.questions) {
+        if answer.is_empty() || (!info.multiple && answer.len() != 1) || answer.len() > 20 {
+            return Err(ApiError::bad_request("invalid OpenCode question answer"));
+        }
+        for value in answer {
+            total_bytes = total_bytes.saturating_add(value.len());
+            if value.trim().is_empty() || value.len() > 4_096 || value.contains('\0') {
+                return Err(ApiError::bad_request("invalid OpenCode question answer"));
+            }
+            if !info.custom && !info.options.iter().any(|option| option.label == *value) {
+                return Err(ApiError::bad_request(
+                    "OpenCode question answer is not an available option",
+                ));
+            }
+        }
+    }
+    if total_bytes > 32_000 {
+        return Err(ApiError::bad_request(
+            "OpenCode question answers are too large",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_remote_id(id: &str, prefix: &str, kind: &str) -> ApiResult<()> {
+    if !valid_remote_id(id, prefix) {
+        return Err(ApiError::bad_request(format!("invalid OpenCode {kind} ID")));
+    }
+    Ok(())
+}
+
+fn valid_remote_id(id: &str, prefix: &str) -> bool {
+    id.starts_with(prefix)
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ScopePermissionRequest {
     scope_type: String,
@@ -1628,5 +1863,64 @@ mod tests {
         assert_eq!(history[0].text, "Diagnostique o host");
         assert_eq!(history[1].text, "Sistema saudável.");
         assert!(!history[1].pending);
+    }
+
+    #[test]
+    fn pending_questions_are_bounded_and_replies_match_the_schema() {
+        let questions = parse_pending_questions(serde_json::json!([{
+            "id": "que_123",
+            "sessionID": "ses_123",
+            "questions": [{
+                "question": "Qual ambiente?",
+                "header": "Ambiente",
+                "options": [{"label": "Produção", "description": "Servidor principal"}],
+                "multiple": false,
+                "custom": true
+            }]
+        }]))
+        .unwrap();
+        assert_eq!(questions.len(), 1);
+        assert!(
+            validate_question_reply(
+                &questions[0],
+                &QuestionReplyRequest {
+                    answers: vec![vec!["Produção".into()]],
+                    reject: false,
+                }
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_question_reply(
+                &questions[0],
+                &QuestionReplyRequest {
+                    answers: Vec::new(),
+                    reject: false,
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            validate_question_reply(
+                &questions[0],
+                &QuestionReplyRequest {
+                    answers: Vec::new(),
+                    reject: true,
+                }
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn pending_question_parser_rejects_untrusted_identifiers() {
+        assert!(
+            parse_pending_questions(serde_json::json!([{
+                "id": "../question",
+                "sessionID": "ses_123",
+                "questions": [{"question": "Continue?", "header": "Confirmação", "options": []}]
+            }]))
+            .is_err()
+        );
     }
 }
