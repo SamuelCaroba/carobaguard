@@ -1152,6 +1152,7 @@ function renderPendingQuestion() {
   $("question-card").hidden = !pending;
   if (!pending) {
     $("question-fields").replaceChildren();
+    $("submit-question").disabled = true;
     if (state.aiResponding && !state.aiRequestPending) setAiResponding(false);
     return;
   }
@@ -1192,7 +1193,21 @@ function renderPendingQuestion() {
     return fieldset;
   });
   $("question-fields").replaceChildren(...fields);
+  updateQuestionSubmitState();
   setAiResponding(true, "OpenCode aguarda sua resposta…");
+}
+
+function updateQuestionSubmitState() {
+  const fields = Array.from($("question-fields").querySelectorAll(".question-field"));
+  const complete = fields.length > 0 && fields.every((field) => {
+    const selected = field.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked');
+    const custom = field.querySelector("[data-custom-answer]")?.value.trim();
+    return Boolean(selected || custom);
+  });
+  $("submit-question").disabled = !complete;
+  $("question-hint").textContent = complete
+    ? "Resposta pronta para enviar."
+    : "Selecione uma opção para continuar.";
 }
 
 function collectQuestionAnswers() {
@@ -1302,6 +1317,8 @@ $("question-card").addEventListener("submit", (event) => {
   event.preventDefault();
   answerQuestion(false);
 });
+$("question-fields").addEventListener("change", updateQuestionSubmitState);
+$("question-fields").addEventListener("input", updateQuestionSubmitState);
 $("reject-question").addEventListener("click", () => answerQuestion(true));
 $("approve-permission").addEventListener("click", () => answerPermission("once"));
 $("reject-permission").addEventListener("click", () => answerPermission("reject"));

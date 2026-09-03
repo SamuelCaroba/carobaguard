@@ -222,6 +222,9 @@ async fn static_asset(uri: Uri) -> Response {
         HeaderValue::from_static("no-referrer"),
     );
     response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
 }
 
 #[cfg(test)]
@@ -238,6 +241,10 @@ mod tests {
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE).unwrap(),
             "text/html"
+        );
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
         );
     }
 }
