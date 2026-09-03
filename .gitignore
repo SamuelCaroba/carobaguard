@@ -6,4 +6,5 @@
 *.db-wal
 *.log
 /dist/
+/minecraft-server/
 .DS_Store

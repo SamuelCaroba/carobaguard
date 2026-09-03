@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A lightweight, AI-assisted Linux server control plane"
 license = "AGPL-3.0-only"
-repository = "https://github.com/carobaguard/carobaguard"
+repository = "https://github.com/SamuelCaroba/carobaguard"
 
 [dependencies]
 anyhow = "1.0"
