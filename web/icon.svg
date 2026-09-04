@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">CarobaGuard</title>
+  <path d="M32 4 54 12v17c0 14-8.8 24.3-22 31C18.8 53.3 10 43 10 29V12L32 4Z" fill="#10161c" stroke="#45dfa2" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M43 21.5A15 15 0 1 0 43 42.5" fill="none" stroke="#50a7ff" stroke-width="6" stroke-linecap="round"/>
+  <path d="M32 8v7" stroke="#45dfa2" stroke-width="3" stroke-linecap="round"/>
+</svg>

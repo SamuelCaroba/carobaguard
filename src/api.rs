@@ -230,6 +230,7 @@ async fn static_asset(uri: Uri) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::BodyExt;
 
     #[tokio::test]
     async fn missing_static_assets_are_not_disguised_as_html() {
@@ -246,5 +247,17 @@ mod tests {
             response.headers().get(header::CACHE_CONTROL).unwrap(),
             "no-cache"
         );
+    }
+
+    #[tokio::test]
+    async fn serves_embedded_svg_icon_with_the_correct_content_type() {
+        let response = static_asset(Uri::from_static("/icon.svg")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/svg+xml"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(body.starts_with(b"<svg"));
     }
 }
