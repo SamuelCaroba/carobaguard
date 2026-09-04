@@ -14,6 +14,15 @@ const state = {
   aiPhase: "sleeping",
   aiResponding: false,
   aiRequestPending: false,
+  aiSessionBusy: false,
+  aiMessages: [],
+  aiChatNotice: null,
+  aiChatError: null,
+  aiPendingRequest: null,
+  aiFailedRequest: null,
+  aiHistorySync: null,
+  aiHistorySyncQueued: false,
+  aiRecoveryTimer: null,
   aiContext: { kind: "system", target: null, label: "System overview" },
   pendingPermissions: [],
   pendingQuestions: [],
@@ -37,7 +46,9 @@ async function request(path, options = {}) {
   const body = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
     const message = body && body.error ? body.error.message : `HTTP ${response.status}`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -96,7 +107,13 @@ $("logout").addEventListener("click", async () => {
   state.stream = null;
   state.aiStream = null;
   state.aiSession = null;
+  resetAiRequestState();
+  state.aiMessages = [];
+  state.aiChatNotice = null;
+  state.aiChatError = null;
   clearPendingPermissions();
+  state.pendingQuestions = [];
+  renderPendingQuestion();
   state.unrestrictedConfirmed = false;
   state.csrf = "";
   state.user = null;
@@ -823,6 +840,7 @@ async function loadAi() {
     renderPendingQuestion();
     if (!state.aiSession && !sessions.length) setAiSetup(true);
     ensureAiEventStream();
+    if (state.aiSession) await reconcileAiHistory();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -898,20 +916,41 @@ function updateAiConversation() {
 }
 
 function clearChatMessages(message = null) {
-  $("chat-messages").replaceChildren();
-  if (message) addChatMessage("agent", message);
+  state.aiMessages = [];
+  state.aiChatNotice = message;
+  state.aiChatError = null;
+  state.aiFailedRequest = null;
+  renderDisplayedChat();
 }
 
 function renderChatHistory(messages) {
-  $("chat-messages").replaceChildren();
-  if (!messages.length) {
-    addChatMessage("agent", "Sessão pronta. Envie uma mensagem para iniciar.");
-    return;
+  state.aiMessages = CarobaChatRecovery.reconcileHistory(messages);
+  state.aiChatNotice = null;
+  const failed = state.aiFailedRequest;
+  if (!failed || CarobaChatRecovery.hasRecoveredResponse(state.aiMessages, failed.baselineIds, failed.text)) {
+    state.aiChatError = null;
+    state.aiFailedRequest = null;
   }
-  messages.forEach((message) => {
+  renderDisplayedChat();
+}
+
+function renderDisplayedChat() {
+  $("chat-messages").replaceChildren();
+  if (state.aiChatNotice) addChatMessage("agent", state.aiChatNotice);
+  state.aiMessages.forEach((message) => {
     addChatMessage(message.role === "user" ? "user" : "agent", message.text);
     if (message.error) addChatMessage("agent", message.error);
   });
+  const optimistic = state.aiPendingRequest || state.aiFailedRequest;
+  if (optimistic
+      && optimistic.sessionId === state.aiSession?.id
+      && !CarobaChatRecovery.hasRemoteUserMessage(state.aiMessages, optimistic)) {
+    addChatMessage("user", optimistic.text);
+  }
+  if (state.aiChatError) addChatMessage("agent", `Erro: ${state.aiChatError}`);
+  if (!state.aiChatNotice && !state.aiMessages.length && !optimistic && !state.aiChatError) {
+    addChatMessage("agent", "Sessão pronta. Envie uma mensagem para iniciar.");
+  }
 }
 
 async function selectAiSession(session) {
@@ -925,13 +964,13 @@ async function selectAiSession(session) {
   renderPendingQuestion();
   setAiResponding(true, "Carregando histórico da sessão…");
   try {
-    const history = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`);
-    renderChatHistory(history);
+    await reconcileAiHistory();
     renderAiStatus(await request("/api/v1/opencode/status"));
   } catch (error) {
     clearChatMessages(`Não foi possível carregar a sessão: ${error.message}`);
   } finally {
-    setAiResponding(false);
+    const remoteResponsePending = state.aiMessages.some((message) => message.role === "assistant" && message.pending);
+    if (!state.aiPendingRequest && !remoteResponsePending) setAiResponding(false);
   }
 }
 
@@ -959,9 +998,11 @@ function startAi() {
 async function stopAi() {
   try {
     await request("/api/v1/opencode/stop", { method: "POST", body: "{}" });
-    state.aiRequestPending = false;
-    setAiResponding(false);
+    resetAiRequestState();
     clearPendingPermissions();
+    state.pendingQuestions = [];
+    renderPendingQuestion();
+    setAiResponding(false);
     renderAiStatus(await request("/api/v1/opencode/status"));
     toast("OpenCode stopped; session state remains persisted.");
   } catch (error) { toast(error.message, true); }
@@ -1006,33 +1047,183 @@ async function sendChat(event) {
   const input = $("chat-prompt");
   const message = input.value.trim();
   if (!message || !state.aiSession || state.aiResponding) return;
-  addChatMessage("user", message);
+  const session = state.aiSession;
+  state.aiPendingRequest = {
+    sessionId: session.id,
+    text: message,
+    baselineIds: CarobaChatRecovery.messageIds(state.aiMessages),
+    postError: null,
+    postResponse: null,
+    postSettled: false,
+    remoteAccepted: false,
+    recoveryAttempts: 0,
+    startedAt: Date.now(),
+  };
+  state.aiChatNotice = null;
+  state.aiChatError = null;
+  state.aiFailedRequest = null;
   input.value = "";
   state.aiRequestPending = true;
+  state.aiSessionBusy = true;
+  renderDisplayedChat();
   setAiResponding(true, "OpenCode está analisando…");
+  let response;
   try {
-    const session = state.aiSession;
-    const response = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`, {
+    response = await request(`/api/v1/opencode/sessions/${encodeURIComponent(session.id)}/messages`, {
       method: "POST",
       body: JSON.stringify({
         message,
         context: { kind: state.aiContext.kind, target: state.aiContext.target },
       }),
     });
-    const text = Array.isArray(response.parts)
-      ? response.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n")
-      : "";
-    addChatMessage("agent", text || JSON.stringify(response, null, 2));
   } catch (error) {
-    const message = error.message === "Failed to fetch"
-      ? "A conexão com o CarobaGuard foi interrompida. Reabra esta sessão para recuperar uma resposta concluída."
-      : error.message;
-    addChatMessage("agent", `Erro: ${message}`);
-  } finally {
-    state.aiRequestPending = false;
-    setAiResponding(false);
-    input.focus();
+    const pending = state.aiPendingRequest;
+    if (pending?.sessionId !== session.id) return;
+    pending.postSettled = true;
+    pending.postError = error;
+    setAiResponding(true, "A conexão falhou; recuperando a resposta pelo histórico…");
+    try {
+      await reconcileAiHistory({ settlePending: true });
+    } catch (_) {
+      scheduleAiRecovery();
+    }
+    if (state.aiPendingRequest === pending && error.status && error.status < 500 && !pending.remoteAccepted) {
+      finishAiRequest(error.message);
+    }
+    if (state.aiPendingRequest?.sessionId === session.id) scheduleAiRecovery();
+    return;
   }
+  if (state.aiPendingRequest?.sessionId === session.id) {
+    state.aiPendingRequest.postSettled = true;
+    state.aiPendingRequest.postResponse = response;
+    $("ai-thinking-text").textContent = "Confirmando a resposta no histórico…";
+    try {
+      await reconcileAiHistory({ settlePending: true });
+    } catch (_) {
+      scheduleAiRecovery();
+    }
+    if (state.aiPendingRequest?.sessionId === session.id) scheduleAiRecovery();
+  }
+}
+
+async function reconcileAiHistory({ settlePending = false } = {}) {
+  const session = state.aiSession;
+  if (!session) return false;
+  if (state.aiHistorySync) {
+    state.aiHistorySyncQueued ||= settlePending;
+    return state.aiHistorySync;
+  }
+  const sessionId = session.id;
+  const sync = (async () => {
+    const history = await request(`/api/v1/opencode/sessions/${encodeURIComponent(sessionId)}/messages`);
+    if (state.aiSession?.id !== sessionId) return false;
+    renderChatHistory(history);
+    const pending = state.aiPendingRequest;
+    if (pending?.sessionId === sessionId) {
+      pending.remoteAccepted ||= CarobaChatRecovery.hasRemoteUserMessage(state.aiMessages, pending);
+    }
+    const recovered = pending?.sessionId === sessionId
+      && CarobaChatRecovery.hasRecoveredResponse(state.aiMessages, pending.baselineIds, pending.text);
+    if (recovered) {
+      finishAiRequest();
+      return true;
+    }
+    const remoteResponsePending = state.aiMessages.some((message) => message.role === "assistant" && message.pending);
+    if (pending?.sessionId === sessionId) {
+      setAiResponding(true, settlePending
+        ? "OpenCode concluiu; recuperando a resposta…"
+        : "Aguardando a resposta do OpenCode…");
+      if (settlePending) scheduleAiRecovery();
+    } else {
+      state.aiSessionBusy = remoteResponsePending;
+      setAiResponding(remoteResponsePending, remoteResponsePending
+        ? "OpenCode está respondendo…"
+        : undefined);
+    }
+    return false;
+  })();
+  state.aiHistorySync = sync;
+  try {
+    return await sync;
+  } finally {
+    if (state.aiHistorySync === sync) state.aiHistorySync = null;
+    if (state.aiHistorySyncQueued) {
+      state.aiHistorySyncQueued = false;
+      void reconcileAiHistory({ settlePending: true }).catch(() => scheduleAiRecovery());
+    }
+  }
+}
+
+function scheduleAiRecovery() {
+  const pending = state.aiPendingRequest;
+  if (!pending || state.aiRecoveryTimer) return;
+  const delay = CarobaChatRecovery.recoveryDelay(pending.recoveryAttempts);
+  if (delay === null) {
+    if ((!pending.postSettled || pending.remoteAccepted)
+        && CarobaChatRecovery.canContinueRecovery(pending.startedAt)) {
+      pending.recoveryAttempts -= 1;
+      scheduleAiRecovery();
+      return;
+    }
+    const response = pending.postResponse;
+    const text = Array.isArray(response?.parts)
+      ? response.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim()
+      : "";
+    if (text) {
+      state.aiMessages = CarobaChatRecovery.reconcileHistory([
+        ...state.aiMessages,
+        {
+          id: response.info?.id || `post-${Date.now()}`,
+          role: "assistant",
+          text,
+          pending: false,
+          finish: response.info?.finish || null,
+          error: null,
+        },
+      ]);
+      finishAiRequest();
+    } else {
+      finishAiRequest(pending.postError?.message
+        || "Não foi possível confirmar a resposta no histórico. A sessão será reconciliada novamente quando a conexão voltar.");
+    }
+    return;
+  }
+  pending.recoveryAttempts += 1;
+  state.aiRecoveryTimer = window.setTimeout(async () => {
+    state.aiRecoveryTimer = null;
+    if (state.aiPendingRequest !== pending) return;
+    try {
+      const recovered = await reconcileAiHistory();
+      if (!recovered && state.aiPendingRequest === pending) scheduleAiRecovery();
+    } catch (_) {
+      if (state.aiPendingRequest === pending) scheduleAiRecovery();
+    }
+  }, delay);
+}
+
+function finishAiRequest(error = null) {
+  const pending = state.aiPendingRequest;
+  if (state.aiRecoveryTimer) window.clearTimeout(state.aiRecoveryTimer);
+  state.aiRecoveryTimer = null;
+  state.aiPendingRequest = null;
+  state.aiRequestPending = false;
+  state.aiSessionBusy = false;
+  state.aiHistorySyncQueued = false;
+  state.aiChatError = error;
+  state.aiFailedRequest = error ? pending : null;
+  renderDisplayedChat();
+  setAiResponding(false);
+  $("chat-prompt").focus();
+}
+
+function resetAiRequestState() {
+  if (state.aiRecoveryTimer) window.clearTimeout(state.aiRecoveryTimer);
+  state.aiRecoveryTimer = null;
+  state.aiPendingRequest = null;
+  state.aiFailedRequest = null;
+  state.aiRequestPending = false;
+  state.aiSessionBusy = false;
+  state.aiHistorySyncQueued = false;
 }
 
 function setAiResponding(active, message = "OpenCode está respondendo…") {
@@ -1062,6 +1253,29 @@ function addChatMessage(kind, text) {
 function ensureAiEventStream() {
   if (state.aiStream) return;
   state.aiStream = new EventSource("/api/v1/opencode/events");
+  state.aiStream.onopen = () => {
+    if (!state.aiResponding) $("ai-status").textContent = titleCase(state.aiPhase);
+    if (CarobaChatRecovery.shouldReconcile("stream.open") && state.aiSession) {
+      void reconcileAiHistory().catch(() => scheduleAiRecovery());
+    }
+    void refreshPendingQuestions();
+  };
+  state.aiStream.onerror = () => {
+    if (state.aiPendingRequest) {
+      setAiResponding(true, "Conexão interrompida; tentando recuperar a resposta…");
+      scheduleAiRecovery();
+    } else if (state.aiResponding) {
+      $("ai-thinking-text").textContent = "Conexão interrompida; aguardando reconexão…";
+    } else {
+      $("ai-status").textContent = "Reconectando";
+    }
+  };
+  state.aiStream.addEventListener("carobaguard.events.missed", () => {
+    if (CarobaChatRecovery.shouldReconcile("events.missed") && state.aiSession) {
+      void reconcileAiHistory({ settlePending: true }).catch(() => scheduleAiRecovery());
+    }
+    void refreshPendingQuestions();
+  });
   const permissionHandler = (event) => {
     try {
       const value = JSON.parse(event.data);
@@ -1108,13 +1322,43 @@ function ensureAiEventStream() {
   state.aiStream.addEventListener("session.status", (event) => {
     try {
       const value = JSON.parse(event.data);
-      const details = value.properties || {};
+      const details = value.properties || value.data || {};
       const remoteId = details.sessionID || details.sessionId;
-      if (state.aiSession && remoteId && remoteId !== state.aiSession.opencode_session_id) return;
-      const status = details.status?.type || "ready";
-      if (status === "busy") setAiResponding(true, "OpenCode está analisando…");
-      else if (!state.aiRequestPending) setAiResponding(false);
-      else $("ai-thinking-text").textContent = "OpenCode está finalizando a resposta…";
+      if (!state.aiSession || remoteId !== state.aiSession.opencode_session_id) return;
+      const status = details.status?.type || details.status || "";
+      if (["busy", "retry"].includes(status)) {
+        state.aiSessionBusy = true;
+        setAiResponding(true, status === "retry" ? "OpenCode tentará novamente…" : "OpenCode está analisando…");
+      } else if (CarobaChatRecovery.shouldReconcile("session.status", status)) {
+        state.aiSessionBusy = false;
+        setAiResponding(true, "OpenCode concluiu; sincronizando a resposta…");
+        void reconcileAiHistory({ settlePending: true }).catch(() => scheduleAiRecovery());
+      }
+    } catch (_) { /* ignore malformed events */ }
+  });
+  state.aiStream.addEventListener("session.idle", (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      const details = value.properties || value.data || {};
+      const remoteId = details.sessionID || details.sessionId;
+      if (!state.aiSession || remoteId !== state.aiSession.opencode_session_id) return;
+      if (CarobaChatRecovery.shouldReconcile("session.idle")) {
+        state.aiSessionBusy = false;
+        setAiResponding(true, "OpenCode concluiu; sincronizando a resposta…");
+        void reconcileAiHistory({ settlePending: true }).catch(() => scheduleAiRecovery());
+      }
+    } catch (_) { /* ignore malformed events */ }
+  });
+  state.aiStream.addEventListener("message.updated", (event) => {
+    try {
+      const value = JSON.parse(event.data);
+      const details = value.properties || value.data || {};
+      const info = details.info || {};
+      const remoteId = details.sessionID || info.sessionID;
+      if (remoteId !== state.aiSession?.opencode_session_id) return;
+      if (info.role === "assistant" && info.finish) {
+        void reconcileAiHistory({ settlePending: true }).catch(() => scheduleAiRecovery());
+      }
     } catch (_) { /* ignore malformed events */ }
   });
   state.aiStream.addEventListener("message.part.updated", (event) => {
@@ -1153,7 +1397,10 @@ function renderPendingQuestion() {
   if (!pending) {
     $("question-fields").replaceChildren();
     $("submit-question").disabled = true;
-    if (state.aiResponding && !state.aiRequestPending) setAiResponding(false);
+    const remoteResponsePending = state.aiMessages.some((message) => message.role === "assistant" && message.pending);
+    if (state.aiResponding && !state.aiRequestPending && !state.aiSessionBusy && !remoteResponsePending) {
+      setAiResponding(false);
+    }
     return;
   }
   $("question-count").textContent = `${pending.questions.length} pergunta${pending.questions.length === 1 ? "" : "s"}`;
@@ -1237,6 +1484,7 @@ async function answerQuestion(reject) {
     });
     state.pendingQuestions = state.pendingQuestions.filter((question) => question.id !== pending.id);
     renderPendingQuestion();
+    state.aiSessionBusy = true;
     setAiResponding(true, reject ? "Pergunta cancelada; aguardando OpenCode…" : "Resposta enviada; OpenCode retomou o trabalho…");
     toast(reject ? "Pergunta do OpenCode cancelada." : "Resposta enviada ao OpenCode.");
   } catch (error) {

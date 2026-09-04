@@ -22,6 +22,13 @@ have a 30-second limit; model message calls have a 15-minute limit so an Approva
 request can remain paused while the administrator decides. Responses are streamed
 into a bounded 4 MiB buffer.
 
+The browser treats the remote message history as the authoritative chat state. It
+reconciles that history when OpenCode reports a ready/idle/completed session, when
+the browser SSE connection opens again, and when the authenticated event relay
+reports that its bounded receiver skipped events. A failed message `POST` is
+therefore checked against remote history before an error is shown; retries use a
+bounded backoff instead of continuous polling.
+
 Permission flow:
 
 1. OpenCode emits `permission.asked` or `permission.v2.asked` on its loopback SSE.

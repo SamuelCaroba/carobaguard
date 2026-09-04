@@ -25,5 +25,8 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Tests
         run: cargo test --locked
-      - name: Frontend syntax
-        run: node --check web/app.js
+      - name: Frontend checks
+        run: |
+          node --check web/app.js
+          node --check web/chat-recovery.js
+          node --test tests/chat-recovery.test.js

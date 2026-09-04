@@ -40,6 +40,7 @@ const UNRESTRICTED_CONFIRMATION: &str = "I understand OpenCode will have full co
 const MAX_OPENCODE_RESPONSE: usize = 4 * 1024 * 1024;
 const MAX_CHAT_HISTORY_MESSAGES: usize = 200;
 const MAX_CHAT_MESSAGE_CHARS: usize = 64 * 1024;
+const EVENTS_MISSED_TYPE: &str = "carobaguard.events.missed";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1738,7 +1739,12 @@ pub async fn events(
                         yield Ok(Event::default().event(event_type).data(data));
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    let value = missed_events_notice(missed);
+                    if let Ok(data) = serde_json::to_string(&value) {
+                        yield Ok(Event::default().event(EVENTS_MISSED_TYPE).data(data));
+                    }
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
@@ -1748,6 +1754,13 @@ pub async fn events(
             .interval(Duration::from_secs(30))
             .text("keep-alive"),
     ))
+}
+
+fn missed_events_notice(missed: u64) -> serde_json::Value {
+    serde_json::json!({
+        "type": EVENTS_MISSED_TYPE,
+        "properties": {"missed": missed, "reconcile": true}
+    })
 }
 
 pub fn basic_authorization(username: &str, password: &str) -> String {
@@ -1863,6 +1876,14 @@ mod tests {
         assert_eq!(history[0].text, "Diagnostique o host");
         assert_eq!(history[1].text, "Sistema saudável.");
         assert!(!history[1].pending);
+    }
+
+    #[test]
+    fn lagged_browser_stream_requests_history_reconciliation() {
+        let notice = missed_events_notice(7);
+        assert_eq!(notice["type"], EVENTS_MISSED_TYPE);
+        assert_eq!(notice["properties"]["missed"], 7);
+        assert_eq!(notice["properties"]["reconcile"], true);
     }
 
     #[test]
