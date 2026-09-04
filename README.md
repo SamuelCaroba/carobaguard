@@ -108,6 +108,22 @@ ssh -L 8090:127.0.0.1:8090 usuario@seu-servidor
 
 Depois abra <http://127.0.0.1:8090> localmente. Para uso permanente, prefira Tailscale/VPN ou um reverse proxy HTTPS. Ao usar HTTPS, configure `CAROBAGUARD_COOKIE_SECURE=true`. Não exponha a porta diretamente na internet durante a fase alpha.
 
+## Terminal administrativo
+
+O terminal web executa um PTY real como o usuário Linux que roda o CarobaGuard.
+Se essa conta estiver autorizada pelo sistema operacional, `sudo` pode pedir a
+senha normalmente e conceder root, assim como em uma sessão SSH. O CarobaGuard
+não cria usuários root, não altera sudoers, não configura `NOPASSWD` e não
+armazena senha, entrada ou saída do terminal.
+
+Para permitir esse comportamento, a unidade de usuário não usa
+`NoNewPrivileges=true`: essa opção seria herdada pelo shell e impediria programas
+setuid como `sudo`. Isso remove uma camada de hardening do daemon, mas não concede
+root automaticamente; grupos, sudoers, polkit e as demais permissões reais da
+conta continuam determinando o que cada comando pode fazer. Login, RBAC, CSRF,
+same-origin, limites de sessão, timeouts e auditoria de abertura/fechamento
+continuam ativos.
+
 ## Modos de permissão da IA
 
 | Modo | Comportamento |

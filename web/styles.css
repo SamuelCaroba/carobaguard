@@ -137,6 +137,8 @@ main { grid-column: 2; min-width: 0; }
 .terminal-heading { min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 17px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .terminal-heading h2 { margin: 0; font-size: 16px; }
 .terminal-heading p:last-child { margin: 5px 0 0; color: var(--muted); font-size: 9px; }
+.terminal-heading .terminal-admin-note strong { color: var(--amber); }
+.terminal-heading .terminal-admin-note code { color: #b8c6cf; font: inherit; }
 .terminal-controls { display: flex; align-items: center; gap: 8px; }
 .terminal-status { min-width: 112px; display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .terminal-status i { width: 6px; height: 6px; border-radius: 50%; background: #667680; }

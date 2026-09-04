@@ -320,11 +320,13 @@ async fn run_session(
                         break "child_error";
                     }
                 }
-                if last_input.elapsed() >= Duration::from_secs(state.config.terminal_idle_timeout_seconds) {
-                    break "idle_timeout";
-                }
-                if started.elapsed() >= Duration::from_secs(state.config.terminal_max_duration_seconds) {
-                    break "max_duration";
+                if let Some(reason) = terminal_timeout_reason(
+                    last_input.elapsed(),
+                    started.elapsed(),
+                    Duration::from_secs(state.config.terminal_idle_timeout_seconds),
+                    Duration::from_secs(state.config.terminal_max_duration_seconds),
+                ) {
+                    break reason;
                 }
             }
         }
@@ -516,12 +518,7 @@ async fn record_close(
             exit_code,
             ai_session_id: None,
             ai_permission_mode: None,
-            metadata: serde_json::json!({
-                "reason": reason,
-                "input_bytes": input_bytes,
-                "output_bytes": output_bytes,
-                "contents_recorded": false,
-            }),
+            metadata: terminal_close_metadata(reason, input_bytes, output_bytes),
         },
     )
     .await
@@ -539,6 +536,30 @@ fn terminal_size(cols: u16, rows: u16) -> ApiResult<PtySize> {
         cols,
         pixel_width: 0,
         pixel_height: 0,
+    })
+}
+
+fn terminal_timeout_reason(
+    idle_elapsed: Duration,
+    session_elapsed: Duration,
+    idle_timeout: Duration,
+    max_duration: Duration,
+) -> Option<&'static str> {
+    if idle_elapsed >= idle_timeout {
+        Some("idle_timeout")
+    } else if session_elapsed >= max_duration {
+        Some("max_duration")
+    } else {
+        None
+    }
+}
+
+fn terminal_close_metadata(reason: &str, input_bytes: u64, output_bytes: u64) -> serde_json::Value {
+    serde_json::json!({
+        "reason": reason,
+        "input_bytes": input_bytes,
+        "output_bytes": output_bytes,
+        "contents_recorded": false,
     })
 }
 
@@ -676,6 +697,77 @@ mod tests {
         assert!(terminal_size(80, 24).is_ok());
         assert!(terminal_size(1, 24).is_err());
         assert!(terminal_size(80, 201).is_err());
+    }
+
+    #[test]
+    fn terminal_input_preserves_control_bytes_and_administrative_commands() {
+        for data in [
+            "\u{3}",
+            "sudo whoami\r",
+            "sudo systemctl status crafty\r",
+            "sudo -i\r",
+        ] {
+            let encoded = serde_json::json!({"type": "input", "data": data});
+            let ClientMessage::Input { data: decoded } =
+                serde_json::from_value(encoded).expect("valid terminal input")
+            else {
+                panic!("input decoded as the wrong message type");
+            };
+            assert_eq!(decoded, data);
+        }
+    }
+
+    #[test]
+    fn terminal_timeouts_remain_bounded() {
+        assert_eq!(
+            terminal_timeout_reason(
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            ),
+            Some("idle_timeout")
+        );
+        assert_eq!(
+            terminal_timeout_reason(
+                Duration::from_secs(1),
+                Duration::from_secs(300),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            ),
+            Some("max_duration")
+        );
+        assert_eq!(
+            terminal_timeout_reason(
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                Duration::from_secs(60),
+                Duration::from_secs(300),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn terminal_audit_metadata_contains_counts_but_no_typed_content() {
+        let metadata = terminal_close_metadata("client_disconnect", 14, 28);
+        assert_eq!(metadata["input_bytes"], 14);
+        assert_eq!(metadata["output_bytes"], 28);
+        assert_eq!(metadata["contents_recorded"], false);
+        assert_eq!(metadata.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn installer_allows_os_authorized_privilege_elevation_in_the_pty() {
+        let installer = include_str!("../scripts/install-user.sh");
+        assert!(
+            !installer
+                .lines()
+                .any(|line| { line.trim_start().starts_with("NoNewPrivileges=") })
+        );
+        assert!(installer.contains("KillMode=control-group"));
+        assert!(installer.contains("PrivateTmp=true"));
+        assert!(installer.contains("UMask=0077"));
     }
 
     #[tokio::test]

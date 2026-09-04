@@ -55,7 +55,12 @@ for the versioned integration contract.
   CSRF token transported as a WebSocket subprotocol, never in the URL.
 - The backend chooses an absolute executable shell and passes it directly to the
   PTY API without shell-command construction. The terminal inherits exactly the
-  daemon account's OS privileges.
+  daemon account's OS identity, groups and privileges. The user-service unit does
+  not set `NoNewPrivileges=true`, because that kernel attribute is inherited by
+  the PTY and would disable legitimate setuid programs such as `sudo`.
+- Administrative elevation is still decided entirely by Linux policy. The
+  terminal does not modify sudoers, grant capabilities, store passwords or
+  bypass an interactive password prompt.
 - Concurrent sessions, input message size, terminal dimensions, idle time and
   absolute lifetime are bounded. Slow WebSocket writes have a finite timeout.
 - Closing the browser, leaving the terminal page, reaching a timeout or stopping

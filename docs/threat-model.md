@@ -29,8 +29,10 @@ paths receive allowlist or canonicalization checks before privileged use.
   pipe backpressure; disconnecting drops the Docker body or kills/reaps journalctl.
 - Database/disk exhaustion: telemetry retention is bounded; streaming readers
   cap lines and bytes; audit data has explicit operator-managed retention.
-- Local privilege escalation: the web daemon must not run as root by default;
-  future helper IPC will authenticate peers and use a fixed operation protocol.
+- Local privilege escalation: the web daemon must not run as root by default.
+  Its administrative terminal intentionally permits the daemon account to invoke
+  setuid programs such as `sudo`; Linux group membership, sudoers and polkit
+  remain the authority that decides whether elevation succeeds.
 - Terminal abuse: only Operator/Admin can allocate bounded PTYs. The backend
   selects the shell, caps message and resize inputs, times out slow clients, and
   kills/reaps the child on disconnect. Terminal contents are excluded from audit

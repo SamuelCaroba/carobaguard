@@ -99,7 +99,6 @@ Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20
 KillMode=control-group
-NoNewPrivileges=true
 PrivateTmp=true
 UMask=0077
 
